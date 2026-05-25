@@ -22,8 +22,9 @@
   let error = $state<string | null>(null);
   let report = $state<BloatwareReport | null>(null);
   let filter = $state('');
+  let disabledPackages = $state<Set<string>>(new Set());
   let tierFilter = $state<'all' | 'moderate' | 'elevated' | 'critical'>('all');
-  let recFilter = $state<'all' | Recommendation>('all');
+  let recFilter = $state<'all' | 'disabled_only' | Recommendation>('all');
 
   // ---- Preset modal state ----
   let activePresetPreview = $state<{ preset: BloatPresetDto; pkgs: string[] } | null>(null);
@@ -39,7 +40,12 @@
     loading = true;
     error = null;
     try {
-      recommendations = await api.bloatwareRecommendations(deviceStore.selected.serial);
+      const [recs, prof] = await Promise.all([
+        api.bloatwareRecommendations(deviceStore.selected.serial),
+        api.exportNativeProfile(deviceStore.selected.serial)
+      ]);
+      recommendations = recs;
+      disabledPackages = new Set(prof.disabled_packages);
     } catch (e) {
       error = (e as DozeForgeError).message;
     } finally {
@@ -56,13 +62,14 @@
         if (!r.package.toLowerCase().includes(needle) && !label.includes(needle)) return false;
       }
       if (tierFilter !== 'all' && r.tier !== tierFilter) return false;
-      if (recFilter !== 'all' && r.recommendation !== recFilter) return false;
+      if (recFilter === 'disabled_only' && !disabledPackages.has(r.package)) return false;
+      if (recFilter !== 'all' && recFilter !== 'disabled_only' && r.recommendation !== recFilter) return false;
       return true;
     });
   });
 
   const counts = $derived.by(() => {
-    const base = { safe: 0, bloat: 0, careful: 0, critical: 0 };
+    const base = { safe: 0, bloat: 0, careful: 0, critical: 0, disabled: disabledPackages.size };
     for (const r of recommendations) {
       if (r.recommendation === 'safe_to_disable') base.safe++;
       else if (r.recommendation === 'preinstalled_bloat') base.bloat++;
@@ -147,12 +154,13 @@
     activePresetPreview = null;
   }
 
-  function recBadgeMeta(r: Recommendation): { cls: string; label: string; icon: string } {
+  function recBadgeMeta(r: Recommendation | 'disabled_only'): { cls: string; label: string; icon: string } {
     switch (r) {
       case 'safe_to_disable':      return { cls: 'rec-safe',     label: 'Safe to disable',     icon: '✓' };
       case 'preinstalled_bloat':   return { cls: 'rec-bloat',    label: 'Preinstalled bloat',  icon: '◐' };
       case 'system_use_with_care': return { cls: 'rec-careful',  label: 'Use with care',       icon: '!' };
       case 'do_not_touch':         return { cls: 'rec-critical', label: 'Do not touch',        icon: '✕' };
+      case 'disabled_only':        return { cls: '',             label: 'Disabled apps',       icon: '⏸' };
     }
   }
 </script>
@@ -194,6 +202,11 @@
 
   <!-- ============ Stat strip ============ -->
   <div class="stat-strip">
+    <button class="stat-tile" class:active={recFilter === 'disabled_only'}
+            onclick={() => recFilter = recFilter === 'disabled_only' ? 'all' : 'disabled_only'}>
+      <div class="stat-num muted">{counts.disabled}</div>
+      <div class="stat-label">Disabled apps</div>
+    </button>
     <button class="stat-tile" class:active={recFilter === 'safe_to_disable'}
             onclick={() => recFilter = recFilter === 'safe_to_disable' ? 'all' : 'safe_to_disable'}>
       <div class="stat-num good-num">{counts.safe}</div>
@@ -286,6 +299,9 @@
               <td class="mono">{counts ? '' : ''}{recommendations.find((x) => x.package === r.package)?.tier === 'critical' ? '—' : ''}</td>
               <td><RiskBadge tier={r.tier} /></td>
               <td>
+                {#if disabledPackages.has(r.package)}
+                  <span class="badge" style="font-family: var(--font-mono); font-size: 10px; margin-right: 0.5rem; background: var(--bg-3);">DISABLED</span>
+                {/if}
                 <span class="rec-badge {meta.cls}" title={meta.label}>
                   <span class="rec-icon">{meta.icon}</span> {meta.label}
                 </span>
@@ -395,7 +411,7 @@
   /* Stat strip */
   .stat-strip {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(5, 1fr);
     gap: 0.6rem;
     margin-bottom: 1rem;
   }
