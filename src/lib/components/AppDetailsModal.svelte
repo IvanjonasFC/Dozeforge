@@ -3,11 +3,18 @@
   import { deviceStore } from '$stores/device.svelte';
   import { api } from '$lib/tauri/api';
   import AppName from './AppName.svelte';
+  import { page } from '$app/stores';
 
   let details = $state<any>(null);
   let loading = $state(false);
   let error = $state<string | null>(null);
   let success = $state<string | null>(null);
+
+  const context = $derived.by(() => {
+    if ($page.url.pathname.includes('/bloatware')) return 'bloatware';
+    if ($page.url.pathname.includes('/sleep') || $page.url.pathname.includes('/battery')) return 'battery';
+    return 'general';
+  });
 
   $effect(() => {
     if (appModalStore.selectedPackage && deviceStore.selected) {
@@ -46,6 +53,8 @@
       else if (action === 'clear_data') await api.clearAppData(deviceStore.selected.serial, pkg);
       else if (action === 'uninstall') await api.uninstallPackage(deviceStore.selected.serial, pkg);
       else if (action === 'settings') await api.openAppSettings(deviceStore.selected.serial, pkg);
+      else if (action === 'disable') await api.disableBloatware(deviceStore.selected.serial, [pkg]);
+      else if (action === 'enable') await api.enableBloatware(deviceStore.selected.serial, [pkg]);
 
       if (action === 'settings') {
         success = 'Opened on device';
@@ -64,8 +73,7 @@
   }
 
   function formatBytes(bytes: number | null) {
-    if (bytes === null) return 'Unknown';
-    if (bytes === 0) return '0 B';
+    if (bytes === null || bytes === 0) return 'Root Required';
     const k = 1024;
     const sizes = ['B', 'KB', 'MB', 'GB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
@@ -138,18 +146,34 @@
           </div>
 
           <div class="actions-grid">
-            <button class="action-btn" onclick={() => executeAction('clear_cache')}>Clear Cache</button>
-            <button class="action-btn danger" onclick={() => { if(confirm('Clear ALL app data?')) executeAction('clear_data'); }}>Clear Data</button>
-            <button class="action-btn" onclick={() => executeAction('force_stop')}>Force Stop</button>
-            {#if !details?.is_system}
-              <button class="action-btn danger" onclick={() => { if(confirm('Uninstall this app?')) executeAction('uninstall'); }}>Uninstall App</button>
+            {#if context === 'bloatware'}
+              <button class="action-btn danger" onclick={() => executeAction('disable')}>Disable App</button>
+              <button class="action-btn" onclick={() => executeAction('enable')}>Enable App</button>
+              {#if !details?.is_system}
+                <button class="action-btn danger" onclick={() => { if(confirm('Uninstall this app?')) executeAction('uninstall'); }}>Uninstall App</button>
+              {:else}
+                <button class="action-btn" disabled style="opacity:0.5; cursor:not-allowed;">System App</button>
+              {/if}
+              <button class="action-btn" onclick={() => executeAction('settings')}>Open on Phone</button>
+            {:else if context === 'battery'}
+              <button class="action-btn" onclick={() => executeAction('ignore_wakelocks')}>Block Wakelocks</button>
+              <button class="action-btn" onclick={() => executeAction('ignore_background')}>Block Background</button>
+              <button class="action-btn" onclick={() => executeAction('force_restricted')}>Force Restricted</button>
+              <button class="action-btn" onclick={() => executeAction('force_stop')}>Force Stop</button>
             {:else}
-              <button class="action-btn" disabled style="opacity:0.5; cursor:not-allowed;">System App</button>
+              <button class="action-btn" onclick={() => executeAction('clear_cache')}>Clear Cache</button>
+              <button class="action-btn danger" onclick={() => { if(confirm('Clear ALL app data?')) executeAction('clear_data'); }}>Clear Data</button>
+              <button class="action-btn" onclick={() => executeAction('force_stop')}>Force Stop</button>
+              {#if !details?.is_system}
+                <button class="action-btn danger" onclick={() => { if(confirm('Uninstall this app?')) executeAction('uninstall'); }}>Uninstall App</button>
+              {:else}
+                <button class="action-btn" disabled style="opacity:0.5; cursor:not-allowed;">System App</button>
+              {/if}
+              <button class="action-btn" onclick={() => executeAction('ignore_wakelocks')}>Block Wakelocks</button>
+              <button class="action-btn" onclick={() => executeAction('ignore_background')}>Block Background</button>
+              <button class="action-btn" onclick={() => executeAction('force_restricted')}>Force Restricted</button>
+              <button class="action-btn" onclick={() => executeAction('settings')}>Open on Phone</button>
             {/if}
-            <button class="action-btn" onclick={() => executeAction('ignore_wakelocks')}>Block Wakelocks</button>
-            <button class="action-btn" onclick={() => executeAction('ignore_background')}>Block Background</button>
-            <button class="action-btn" onclick={() => executeAction('force_restricted')}>Force Restricted</button>
-            <button class="action-btn" onclick={() => executeAction('settings')}>Open on Phone</button>
           </div>
         {/if}
       </div>
