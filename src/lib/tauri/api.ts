@@ -13,6 +13,7 @@ import type {
   CpuAggregate,
   Device,
   DisplaySettings,
+  DozeState,
   KernelWakelock,
   SleepTimeline,
   SystemTweaks,
@@ -68,16 +69,36 @@ async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> 
   }
 }
 
+async function callSilent<T>(cmd: string, fallback: T, args?: Record<string, unknown>): Promise<T> {
+  try {
+    return await invoke<T>(cmd, args);
+  } catch (e) {
+    console.warn(`[DozeForge] Silent telemetry fail on ${cmd}:`, e);
+    return fallback;
+  }
+}
+
 export const api = {
   listDevices: () => call<Device[]>('list_devices'),
 
   probeCapabilities: (serial: string) =>
     call<DeviceCapabilities>('probe_capabilities', { serial }),
 
+  checkRoot: (serial: string) => call<boolean>('check_root', { serial }),
+
   auditDevice: (serial: string) => call<AuditReport>('audit_device', { serial }),
 
   sampleCpu: (serial: string, durationSecs?: number) =>
-    call<CpuAggregate[]>('sample_cpu', { serial, durationSecs }),
+    call<any>('sample_cpu', { serial, durationSecs }),
+
+  getLiveRam: (serial: string) => call<any>('get_live_ram', { serial }),
+  
+  startRamStream: (serial: string) => call<void>('start_ram_stream', { serial }),
+  stopRamStream: () => call<void>('stop_ram_stream'),
+  onRamUpdate: (handler: (snap: any) => void): Promise<UnlistenFn> =>
+    listen<any>('ram_update', (e) => handler(e.payload)),
+
+  getIoStats: (serial: string) => call<any>('get_io_stats', { serial }),
 
   listWakeupSources: (serial: string) =>
     call<WakeupSources>('list_wakeup_sources', { serial }),
@@ -245,6 +266,9 @@ export const api = {
   setAnimationScales: (serial: string, scale: number) =>
     call<OptimizationReport>('set_animation_scales', { serial, scale }),
 
+  getThermalTelemetry: (serial: string) =>
+    callSilent<{ raw_value: number, label: string }>('get_thermal_telemetry', { raw_value: -1, label: 'Unknown' }, { serial }),
+
   setAggressiveDoze: (serial: string, enabled: boolean) =>
     call<OptimizationReport>('set_aggressive_doze', { serial, enabled }),
 
@@ -295,8 +319,8 @@ export const api = {
   getAppRestrictionsBatch: (serial: string, packages: string[]) =>
     call<Record<string, any>>('get_app_restrictions_batch', { serial, packages }),
 
-  getSingleAppDetails: (serial: string, pkg: string) =>
-    call<any>('get_single_app_details', { serial, package: pkg }),
+  getSingleAppDetails: (serial: string, pkg: string, rootMode: boolean = false) =>
+    call<any>('get_single_app_details', { serial, package: pkg, rootMode }),
 
   clearAppData: (serial: string, pkg: string) =>
     call<void>('clear_app_data', { serial, package: pkg }),
@@ -336,8 +360,9 @@ export const api = {
   setDisplaySize: (serial: string, size: string) =>
     call<void>('set_display_size', { serial, size }),
 
-  resetDisplay: (serial: string) =>
-    call<void>('reset_display', { serial }),
+  setWmSize: (serial: string, size: string) => call<void>('set_wm_size', { serial, size }),
+  setWmDensity: (serial: string, density: string) => call<void>('set_wm_density', { serial, density }),
+  resetDisplay: (serial: string) => call<void>('reset_display', { serial }),
 
   setWindowBlurs: (serial: string, disabled: boolean) =>
     call<void>('set_window_blurs', { serial, disabled }),
@@ -385,7 +410,7 @@ export const api = {
     call<void>('fastboot_flash', { serial, partition, imagePath }),
     
   getThermalStatus: (serial: string) =>
-    call<{ raw_value: number, label: string }>('get_thermal_status', { serial }),
+    callSilent<{ raw_value: number, label: string }>('get_thermal_status', { raw_value: -1, label: 'Unknown' }, { serial }),
     
   getNetworkUsage: (serial: string) =>
     call<Array<{ package: string, rx_bytes: number, tx_bytes: number }>>('get_network_usage', { serial }),
@@ -395,7 +420,19 @@ export const api = {
     
   importNativeProfile: (serial: string, profile: { disabled_packages: string[] }) =>
     call<void>('import_native_profile', { serial, profile }),
-    
+
+  adbMdnsServices: () =>
+    call<Array<{ address: string, service_type: string }>>('adb_mdns_services', {}),
+
+  adbPair: (address: string, pin: string) =>
+    call<string>('adb_pair', { address, pin }),
+
+  adbConnect: (address: string) =>
+    call<string>('adb_connect', { address }),
+
+  adbTcpip: (serial: string) =>
+    call<string>('adb_tcpip', { serial }),
+
   launchScrcpy: (serial: string) =>
     call<void>('launch_scrcpy', { serial }),
 

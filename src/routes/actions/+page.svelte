@@ -19,11 +19,11 @@
   let mode = $state<Mode>('profiles');
 
   // ===== Profiles =====
-  const profiles: Array<{ id: Profile; title: string; subtitle: string; tier: string }> = [
-    { id: 'conservative', title: 'Conservative', subtitle: 'Only known offenders.',     tier: 'moderate' },
-    { id: 'balanced',     title: 'Balanced',     subtitle: 'Recommended default.',      tier: 'ok' },
-    { id: 'aggressive',   title: 'Aggressive',   subtitle: 'Restrict every user app.',  tier: 'elevated' },
-    { id: 'nuclear',      title: 'Nuclear',      subtitle: 'Maximum savings.',          tier: 'critical' }
+  const profiles: Array<{ id: Profile; title: string; subtitle: string; tier: string; icon: string }> = [
+    { id: 'conservative', title: 'Conservative', subtitle: 'Only known offenders.',     tier: 'moderate', icon: '🛡️' },
+    { id: 'balanced',     title: 'Balanced',     subtitle: 'Recommended default.',      tier: 'ok',       icon: '⚖️' },
+    { id: 'aggressive',   title: 'Aggressive',   subtitle: 'Restrict every user app.',  tier: 'elevated', icon: '⚡' },
+    { id: 'nuclear',      title: 'Nuclear',      subtitle: 'Maximum savings.',          tier: 'critical', icon: '☢️' }
   ];
 
   let selectedProfile = $state<Profile | null>(null);
@@ -163,8 +163,13 @@
       {#each profiles as p (p.id)}
         <button class="profile-card" data-tier={p.tier} onclick={() => loadPreview(p.id)}>
           <div class="profile-tier" data-tier={p.tier}></div>
-          <h3>{p.title}</h3>
-          <p>{p.subtitle}</p>
+          <div class="profile-content">
+            <div class="profile-icon">{p.icon}</div>
+            <div>
+              <h3>{p.title}</h3>
+              <p>{p.subtitle}</p>
+            </div>
+          </div>
         </button>
       {/each}
     </div>
@@ -367,7 +372,7 @@
   /* Profiles */
   .profile-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.85rem; }
   .profile-card {
-    background: linear-gradient(180deg, var(--bg-2) 0%, #141417 100%);
+    background: linear-gradient(135deg, var(--bg-1) 0%, var(--bg-2) 100%);
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
     padding: 1.5rem;
@@ -375,9 +380,21 @@
     cursor: pointer;
     position: relative;
     overflow: hidden;
-    transition: border-color var(--t-base), transform var(--t-base);
+    transition: all var(--t-fast);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
   }
-  .profile-card:hover { border-color: var(--border-strong); transform: translateY(-2px); }
+  .profile-card:hover { 
+    border-color: var(--border-strong); 
+    transform: translateY(-2px); 
+    box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+  }
+  .profile-card[data-tier="ok"]:hover { box-shadow: 0 8px 24px color-mix(in srgb, var(--good) 20%, transparent); border-color: color-mix(in srgb, var(--good) 50%, transparent); }
+  .profile-card[data-tier="moderate"]:hover { box-shadow: 0 8px 24px color-mix(in srgb, var(--accent) 20%, transparent); border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
+  .profile-card[data-tier="elevated"]:hover { box-shadow: 0 8px 24px color-mix(in srgb, var(--warn) 20%, transparent); border-color: color-mix(in srgb, var(--warn) 50%, transparent); }
+  .profile-card[data-tier="critical"]:hover { box-shadow: 0 8px 24px color-mix(in srgb, var(--bad) 20%, transparent); border-color: color-mix(in srgb, var(--bad) 50%, transparent); }
+
+  .profile-content { display: flex; gap: 1rem; align-items: center; }
+  .profile-icon { font-size: 28px; line-height: 1; filter: grayscale(0.2); }
   .profile-tier {
     position: absolute;
     top: 0; left: 0;
@@ -388,8 +405,8 @@
   .profile-tier[data-tier="ok"]       { background: var(--good); }
   .profile-tier[data-tier="elevated"] { background: var(--warn); }
   .profile-tier[data-tier="critical"] { background: var(--bad); }
-  .profile-card h3 { margin: 0 0 0.4rem 0; color: var(--fg-0); }
-  .profile-card p { margin: 0; color: var(--fg-2); font-size: var(--font-size-sm); }
+  .profile-card h3 { margin: 0 0 0.25rem 0; color: var(--fg-0); font-size: var(--font-size-lg); }
+  .profile-card p { margin: 0; color: var(--fg-2); font-size: var(--font-size-sm); line-height: 1.4; }
 
   /* Summary grid */
   .summary-grid {

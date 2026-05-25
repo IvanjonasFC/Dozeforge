@@ -1,6 +1,6 @@
 {
-  "name": "forgeandroid",
-  "version": "0.5.1",
+  "name": "dozeforge",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "description": "Forge your own power-management rules for Android. Surgical ADB battery and CPU auditor with atomic rollback.",
@@ -17,6 +17,7 @@
   "dependencies": {
     "@fontsource-variable/geist": "^5.2.9",
     "@fontsource-variable/jetbrains-mono": "^5.2.8",
+    "@tanstack/svelte-virtual": "^3.13.25",
     "@tauri-apps/api": "^2.1.1",
     "@tauri-apps/plugin-dialog": "^2.0.1",
     "@tauri-apps/plugin-fs": "^2.0.3",

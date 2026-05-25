@@ -11,6 +11,7 @@ use crate::error::{Error, Result};
 use crate::heuristics::manifest::HybridManifest;
 use crate::ipc::streams::{self, StreamState};
 use crate::ipc::diagnostics::{LogStreamState, new_log_stream_state};
+use crate::ipc::streaming::{RamStreamState, new_ram_stream_state};
 use crate::snapshot::store::SnapshotStore;
 use crate::telemetry::ActionLog;
 
@@ -21,6 +22,7 @@ pub struct AppState {
     pub action_log: ActionLog,
     pub stream_state: StreamState,
     pub log_stream: LogStreamState,
+    pub ram_stream: RamStreamState,
     pub data_dir: PathBuf,
 }
 
@@ -43,6 +45,7 @@ impl AppState {
         let action_log = ActionLog::new(data_dir.join("actions.jsonl"));
         let stream_state = streams::new_state();
         let log_stream = new_log_stream_state();
+        let ram_stream = new_ram_stream_state();
 
         Ok(Self {
             adb,
@@ -51,6 +54,7 @@ impl AppState {
             action_log,
             stream_state,
             log_stream,
+            ram_stream,
             data_dir,
         })
     }

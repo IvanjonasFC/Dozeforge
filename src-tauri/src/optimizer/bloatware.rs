@@ -30,6 +30,10 @@ impl<'a> BloatwareManager<'a> {
         let mut failed = Vec::new();
 
         for target in targets {
+            if !target.is_valid() {
+                failed.push((target.clone(), "Invalid package name".into()));
+                continue;
+            }
             if let Err(e) = self.guard(target) {
                 failed.push((target.clone(), e.to_string()));
                 continue;
@@ -55,6 +59,10 @@ impl<'a> BloatwareManager<'a> {
         let mut enabled = Vec::new();
         let mut failed = Vec::new();
         for target in targets {
+            if !target.is_valid() {
+                failed.push((target.clone(), "Invalid package name".into()));
+                continue;
+            }
             let cmd = format!("pm enable {}", target);
             match self.client.invoker.shell(self.serial, &cmd, Duration::from_secs(8)).await {
                 Ok(stdout) if stdout.contains("enabled") => enabled.push(target.clone()),

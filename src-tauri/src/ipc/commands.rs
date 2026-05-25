@@ -48,6 +48,16 @@ use crate::snapshot::rollback::{Rollback, RollbackReport};
 use crate::snapshot::store::SnapshotMeta;
 use crate::state::AppState;
 
+async fn safe_pm_list_packages(invoker: &crate::adb::command::AdbInvoker, serial: &DeviceSerial) -> crate::error::Result<String> {
+    if let Ok(out) = invoker.shell(serial, "pm list packages -f -U --user 0", Duration::from_secs(20)).await {
+        if !out.trim().is_empty() && !out.contains("Exception") { return Ok(out); }
+    }
+    if let Ok(out) = invoker.shell(serial, "pm list packages -f -U", Duration::from_secs(20)).await {
+        if !out.trim().is_empty() && !out.contains("Exception") { return Ok(out); }
+    }
+    invoker.shell(serial, "pm list packages -f", Duration::from_secs(20)).await.map_err(Into::into)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditReport {
     pub device_serial: DeviceSerial,
@@ -128,6 +138,20 @@ async fn inner_audit(state: Arc<AppState>, serial: String) -> Result<AuditReport
 }
 
 #[tauri::command]
+pub async fn check_root(
+    state: State<'_, Arc<AppState>>,
+    serial: String,
+) -> std::result::Result<bool, IpcError> {
+    let serial = deserialise_serial(&serial);
+    // Execute `su -c id`. If it contains 'uid=0(root)', root access is granted.
+    let output = state.adb.invoker.shell(&serial, "su -c id", Duration::from_secs(5)).await;
+    match output {
+        Ok(out) => Ok(out.contains("uid=0")),
+        Err(_) => Ok(false),
+    }
+}
+
+#[tauri::command]
 pub async fn sample_cpu(
     state: State<'_, Arc<AppState>>,
     serial: String,
@@ -142,6 +166,27 @@ pub async fn sample_cpu(
         config: SamplingConfig { interval, total_samples },
     };
     sampler.run().await.map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn get_live_ram(
+    state: State<'_, Arc<AppState>>,
+    serial: String,
+) -> std::result::Result<crate::parsers::meminfo::MemInfo, IpcError> {
+    let serial = deserialise_serial(&serial);
+    let raw = state.adb.invoker.shell(&serial, "dumpsys meminfo", Duration::from_secs(10)).await?;
+    crate::parsers::meminfo::MemInfoParser::parse(&raw).map_err(IpcError::from)
+}
+
+#[tauri::command]
+pub async fn get_io_stats(
+    state: State<'_, Arc<AppState>>,
+    serial: String,
+) -> std::result::Result<Vec<crate::parsers::io_stats::UidIoStat>, IpcError> {
+    let serial = deserialise_serial(&serial);
+    // Requires root mode, but let's just attempt it with su -c
+    let raw = state.adb.invoker.shell(&serial, "su -c cat /proc/uid_io/stats", Duration::from_secs(10)).await?;
+    crate::parsers::io_stats::IoStatsParser::parse(&raw).map_err(IpcError::from)
 }
 
 #[tauri::command]
@@ -189,8 +234,7 @@ pub async fn list_packages(
     serial: String,
 ) -> std::result::Result<Vec<InstalledPackage>, IpcError> {
     let serial = deserialise_serial(&serial);
-    let raw = state.adb.invoker
-        .shell(&serial, "pm list packages -f -U", Duration::from_secs(20)).await?;
+    let raw = safe_pm_list_packages(&state.adb.invoker, &serial).await?;
     PackageListParser.parse(&raw).map_err(Into::into)
 }
 
@@ -208,8 +252,7 @@ async fn inner_classify(
     packages: Vec<String>,
 ) -> Result<Vec<PackageVerdict>> {
     let serial = deserialise_serial(&serial);
-    let raw = state.adb.invoker
-        .shell(&serial, "pm list packages -f -U", Duration::from_secs(20)).await?;
+    let raw = safe_pm_list_packages(&state.adb.invoker, &serial).await?;
     let installed = PackageListParser.parse(&raw)?;
 
     let manifest = state.manifest.read().await;
@@ -243,8 +286,7 @@ async fn inner_apply(
 ) -> Result<OptimizationReport> {
     let serial = deserialise_serial(&serial);
     let capabilities = CapabilityProbe::probe(&state.adb, &serial).await?;
-    let raw = state.adb.invoker
-        .shell(&serial, "pm list packages -f -U", Duration::from_secs(20)).await?;
+    let raw = safe_pm_list_packages(&state.adb.invoker, &serial).await?;
     let installed = PackageListParser.parse(&raw)?;
 
     let manifest = state.manifest.read().await;
@@ -304,6 +346,7 @@ async fn inner_take_snapshot(
 
     for pkg_raw in packages {
         let pkg = PackageName(pkg_raw);
+        if !pkg.is_valid() { continue; }
         if let Ok(raw) = state.adb.invoker.shell(
             &serial, &format!("cmd appops get {}", pkg), Duration::from_secs(8),
         ).await {
@@ -394,8 +437,7 @@ async fn inner_bloatware(
     disable: bool,
 ) -> Result<BloatwareReport> {
     let serial = deserialise_serial(&serial);
-    let raw = state.adb.invoker
-        .shell(&serial, "pm list packages -f -U", Duration::from_secs(20)).await?;
+    let raw = safe_pm_list_packages(&state.adb.invoker, &serial).await?;
     let installed = PackageListParser.parse(&raw)?;
     let manifest = state.manifest.read().await;
 
@@ -452,11 +494,7 @@ async fn inner_preview_profile(
     let serial = deserialise_serial(&serial);
     let capabilities = CapabilityProbe::probe(&state.adb, &serial).await?;
 
-    let raw = state
-        .adb
-        .invoker
-        .shell(&serial, "pm list packages -f -U", Duration::from_secs(20))
-        .await?;
+    let raw = safe_pm_list_packages(&state.adb.invoker, &serial).await?;
     let installed = PackageListParser.parse(&raw)?;
 
     // Doze whitelist (for Nuclear profile)
@@ -995,7 +1033,7 @@ pub async fn storage_inventory(
     
     // Fetch both in parallel: pm list packages -f, and du -sk
     let pm_fut = state.adb.invoker.shell(&serial, "pm list packages -f 2>/dev/null", Duration::from_secs(10));
-    let du_fut = state.adb.invoker.shell(&serial, "du -sk /data/app/*/* /system/app/* /system/priv-app/* /product/app/* /product/priv-app/* /vendor/app/* 2>/dev/null || true", Duration::from_secs(15));
+    let du_fut = state.adb.invoker.shell(&serial, "find /data/app /system/app /system/priv-app /product/app /product/priv-app /vendor/app -maxdepth 2 -type d 2>/dev/null | xargs du -sk 2>/dev/null || true", Duration::from_secs(15));
     
     let (pm_res, du_res) = tokio::join!(pm_fut, du_fut);
     
@@ -1434,10 +1472,7 @@ pub async fn bloatware_recommendations(
     serial: String,
 ) -> std::result::Result<Vec<BloatwareRecommendation>, IpcError> {
     let serial = deserialise_serial(&serial);
-    let raw = state
-        .adb
-        .invoker
-        .shell(&serial, "pm list packages -f -U", Duration::from_secs(20))
+    let raw = safe_pm_list_packages(&state.adb.invoker, &serial)
         .await
         .map_err(IpcError::from)?;
     let installed = PackageListParser.parse(&raw).map_err(IpcError::from)?;
@@ -1480,10 +1515,7 @@ pub async fn preview_bloat_preset(
     preset: BloatPreset,
 ) -> std::result::Result<Vec<String>, IpcError> {
     let serial = deserialise_serial(&serial);
-    let raw = state
-        .adb
-        .invoker
-        .shell(&serial, "pm list packages -f -U", Duration::from_secs(20))
+    let raw = safe_pm_list_packages(&state.adb.invoker, &serial)
         .await
         .map_err(IpcError::from)?;
     let installed = PackageListParser.parse(&raw).map_err(IpcError::from)?;
@@ -1780,13 +1812,13 @@ pub async fn get_app_restrictions_batch(
     packages: Vec<String>,
 ) -> std::result::Result<HashMap<String, AppRestrictions>, IpcError> {
     let serial = deserialise_serial(&serial);
-    let mut tasks = Vec::new();
+    let mut tasks = tokio::task::JoinSet::new();
 
     for pkg_raw in packages {
         let state_clone = state.inner().clone();
         let ser = serial.clone();
         
-        tasks.push(tokio::spawn(async move {
+        tasks.spawn(async move {
             let pkg = crate::parsers::PackageName(pkg_raw.clone());
             let mut restrictions = AppRestrictions {
                 package: pkg_raw.clone(),
@@ -1824,12 +1856,11 @@ pub async fn get_app_restrictions_batch(
             }
             
             (pkg_raw, restrictions)
-        }));
+        });
     }
 
-    let results = futures::future::join_all(tasks).await;
     let mut map = HashMap::new();
-    for res in results {
+    while let Some(res) = tasks.join_next().await {
         if let Ok((pkg, r)) = res {
             map.insert(pkg, r);
         }
@@ -1854,6 +1885,7 @@ pub async fn get_single_app_details(
     state: State<'_, Arc<AppState>>,
     serial: String,
     package: String,
+    root_mode: bool,
 ) -> std::result::Result<SingleAppDetails, IpcError> {
     let serial = deserialise_serial(&serial);
     let pkg = crate::parsers::PackageName(package.clone());
@@ -1865,8 +1897,26 @@ pub async fn get_single_app_details(
         standby_bucket: "unknown".to_string(),
     };
     
+    let su_prefix = if root_mode { "su -c " } else { "" };
+
+    let cmd_ops = format!("cmd appops get {}", pkg);
+    let cmd_bucket = format!("am get-standby-bucket {}", pkg);
+    let cmd_du_data = format!("{}du -sk /data/data/{}", su_prefix, pkg);
+    let cmd_du_user = format!("{}du -sk /data/user_de/0/{}", su_prefix, pkg);
+    let cmd_du_cache = format!("{}du -sk /data/data/{}/cache", su_prefix, pkg);
+    let cmd_pm = format!("pm list packages -f {}", pkg);
+
+    let ops_fut = state.adb.invoker.shell(&serial, &cmd_ops, Duration::from_secs(5));
+    let bucket_fut = state.adb.invoker.shell(&serial, &cmd_bucket, Duration::from_secs(5));
+    let du_data_fut = state.adb.invoker.shell(&serial, &cmd_du_data, Duration::from_secs(5));
+    let du_user_fut = state.adb.invoker.shell(&serial, &cmd_du_user, Duration::from_secs(5));
+    let du_cache_fut = state.adb.invoker.shell(&serial, &cmd_du_cache, Duration::from_secs(5));
+    let pm_fut = state.adb.invoker.shell(&serial, &cmd_pm, Duration::from_secs(5));
+
+    let (ops_res, bucket_res, du_data_res, du_user_res, du_cache_res, pm_res) = tokio::join!(ops_fut, bucket_fut, du_data_fut, du_user_fut, du_cache_fut, pm_fut);
+
     // 1. AppOps
-    if let Ok(raw_ops) = state.adb.invoker.shell(&serial, &format!("cmd appops get {}", pkg), Duration::from_secs(5)).await {
+    if let Ok(raw_ops) = ops_res {
         let parser = crate::parsers::AppOpsParser { package: pkg.clone() };
         if let Ok(ops) = crate::parsers::Parser::parse(&parser, &raw_ops) {
             for op in ops {
@@ -1881,7 +1931,7 @@ pub async fn get_single_app_details(
     }
 
     // 2. Standby Bucket
-    if let Ok(raw_bucket) = state.adb.invoker.shell(&serial, &format!("am get-standby-bucket {}", pkg), Duration::from_secs(5)).await {
+    if let Ok(raw_bucket) = bucket_res {
         if let Ok(n) = raw_bucket.trim().parse::<i32>() {
             if let Some(b) = crate::parsers::StandbyBucket::from_raw(n) {
                 restrictions.standby_bucket = format!("{:?}", b).to_lowercase();
@@ -1892,7 +1942,8 @@ pub async fn get_single_app_details(
     // 3. Cache & Data (App data)
     let mut data_bytes = 0;
     let mut cache_bytes = 0;
-    if let Ok(du_raw) = state.adb.invoker.shell(&serial, &format!("du -sk /data/data/{}", pkg), Duration::from_secs(5)).await {
+    
+    if let Ok(du_raw) = du_data_res {
         if let Some(line) = du_raw.lines().next() {
             if let Some(kb_str) = line.split_whitespace().next() {
                 if let Ok(kb) = kb_str.parse::<u64>() {
@@ -1901,7 +1952,7 @@ pub async fn get_single_app_details(
             }
         }
     }
-    if let Ok(du_raw) = state.adb.invoker.shell(&serial, &format!("du -sk /data/user_de/0/{}", pkg), Duration::from_secs(5)).await {
+    if let Ok(du_raw) = du_user_res {
         if let Some(line) = du_raw.lines().next() {
             if let Some(kb_str) = line.split_whitespace().next() {
                 if let Ok(kb) = kb_str.parse::<u64>() {
@@ -1910,7 +1961,7 @@ pub async fn get_single_app_details(
             }
         }
     }
-    if let Ok(du_raw) = state.adb.invoker.shell(&serial, &format!("du -sk /data/data/{}/cache", pkg), Duration::from_secs(5)).await {
+    if let Ok(du_raw) = du_cache_res {
         if let Some(line) = du_raw.lines().next() {
             if let Some(kb_str) = line.split_whitespace().next() {
                 if let Ok(kb) = kb_str.parse::<u64>() {
@@ -1922,13 +1973,13 @@ pub async fn get_single_app_details(
     
     // 4. APK size
     let mut apk_bytes = 0;
-    if let Ok(pm_raw) = state.adb.invoker.shell(&serial, &format!("pm list packages -f {}", pkg), Duration::from_secs(5)).await {
+    if let Ok(pm_raw) = pm_res {
         for line in pm_raw.lines() {
             if let Some(no_prefix) = line.trim().strip_prefix("package:") {
                 if let Some((path, p)) = no_prefix.rsplit_once('=') {
                     if p == package {
-                        // We found the path.
-                        if let Ok(du_apk) = state.adb.invoker.shell(&serial, &format!("du -sk {}", path), Duration::from_secs(5)).await {
+                        let su_prefix_apk = if root_mode { "su -c " } else { "" };
+                        if let Ok(du_apk) = state.adb.invoker.shell(&serial, &format!("{}du -sk {}", su_prefix_apk, path), Duration::from_secs(5)).await {
                             if let Some(apk_line) = du_apk.lines().next() {
                                 if let Some(kb_str) = apk_line.split_whitespace().next() {
                                     if let Ok(kb) = kb_str.parse::<u64>() {
@@ -2034,6 +2085,47 @@ pub async fn force_refresh_rate(
 }
 
 #[tauri::command]
+pub async fn set_wm_size(
+    state: State<'_, Arc<AppState>>,
+    serial: String,
+    size: String,
+) -> std::result::Result<(), IpcError> {
+    let serial = deserialise_serial(&serial);
+    if size.trim().is_empty() || size.trim() == "reset" {
+        state.adb.invoker.shell(&serial, "wm size reset", Duration::from_secs(5)).await.map_err(IpcError::from)?;
+    } else {
+        state.adb.invoker.shell(&serial, &format!("wm size {}", size), Duration::from_secs(5)).await.map_err(IpcError::from)?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn set_wm_density(
+    state: State<'_, Arc<AppState>>,
+    serial: String,
+    density: String,
+) -> std::result::Result<(), IpcError> {
+    let serial = deserialise_serial(&serial);
+    if density.trim().is_empty() || density.trim() == "reset" {
+        state.adb.invoker.shell(&serial, "wm density reset", Duration::from_secs(5)).await.map_err(IpcError::from)?;
+    } else {
+        state.adb.invoker.shell(&serial, &format!("wm density {}", density), Duration::from_secs(5)).await.map_err(IpcError::from)?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn reset_display(
+    state: State<'_, Arc<AppState>>,
+    serial: String,
+) -> std::result::Result<(), IpcError> {
+    let serial = deserialise_serial(&serial);
+    state.adb.invoker.shell(&serial, "wm size reset", Duration::from_secs(5)).await.map_err(IpcError::from)?;
+    state.adb.invoker.shell(&serial, "wm density reset", Duration::from_secs(5)).await.map_err(IpcError::from)?;
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn set_heads_up_notifications(
     state: State<'_, Arc<AppState>>,
     serial: String,
@@ -2118,16 +2210,7 @@ pub async fn set_display_size(
     Ok(())
 }
 
-#[tauri::command]
-pub async fn reset_display(
-    state: State<'_, Arc<AppState>>,
-    serial: String,
-) -> std::result::Result<(), IpcError> {
-    let serial = deserialise_serial(&serial);
-    let _ = state.adb.invoker.shell(&serial, "wm density reset", Duration::from_secs(5)).await;
-    let _ = state.adb.invoker.shell(&serial, "wm size reset", Duration::from_secs(5)).await;
-    Ok(())
-}
+
 
 #[tauri::command]
 pub async fn set_window_blurs(
@@ -2255,10 +2338,54 @@ pub async fn extract_apk(
 ) -> std::result::Result<String, IpcError> {
     let serial = deserialise_serial(&serial);
     let out = state.adb.invoker.shell(&serial, &format!("pm path {}", package), std::time::Duration::from_secs(10)).await.map_err(IpcError::from)?;
-    if out.is_empty() { return Err(IpcError { kind: "extract_error".into(), message: "Package not found".into() }); }
-    let path = out.trim().strip_prefix("package:").unwrap_or(out.trim());
-    state.adb.invoker.exec(&["-s", serial.as_str(), "pull", path, &save_path], std::time::Duration::from_secs(120)).await.map_err(IpcError::from)?;
-    Ok(format!("APK extracted to {}", save_path))
+    if out.trim().is_empty() { return Err(IpcError { kind: "extract_error".into(), message: "Package not found".into() }); }
+
+    let mut paths = Vec::new();
+    for line in out.lines() {
+        let p = line.trim().strip_prefix("package:").unwrap_or(line.trim());
+        if !p.is_empty() { paths.push(p); }
+    }
+
+    if paths.is_empty() {
+        return Err(IpcError { kind: "extract_error".into(), message: "No APK paths found".into() });
+    }
+
+    if paths.len() == 1 && !save_path.ends_with(".zip") {
+        state.adb.invoker.exec(&["-s", serial.as_str(), "pull", paths[0], &save_path], std::time::Duration::from_secs(120)).await.map_err(IpcError::from)?;
+        return Ok(format!("APK extracted to {}", save_path));
+    }
+
+    let temp_dir = std::env::temp_dir().join(format!("dozeforge_extract_{}", package));
+    std::fs::create_dir_all(&temp_dir).unwrap_or_default();
+
+    for path in &paths {
+        state.adb.invoker.exec(&["-s", serial.as_str(), "pull", path, temp_dir.to_str().unwrap()], std::time::Duration::from_secs(120)).await.map_err(IpcError::from)?;
+    }
+
+    let file = std::fs::File::create(&save_path).map_err(|e| IpcError { kind: "fs_error".into(), message: e.to_string() })?;
+    let mut zip = zip::ZipWriter::new(file);
+    let options = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+
+    for entry in std::fs::read_dir(&temp_dir).unwrap() {
+        let entry = entry.unwrap();
+        let path = entry.path();
+        if path.is_file() {
+            let filename = path.file_name().unwrap().to_str().unwrap();
+            zip.start_file(filename, options).unwrap();
+            let mut f = std::fs::File::open(&path).unwrap();
+            let mut buffer = Vec::new();
+            std::io::Read::read_to_end(&mut f, &mut buffer).unwrap();
+            std::io::Write::write_all(&mut zip, &buffer).unwrap();
+        }
+    }
+
+    zip.start_file("install_me.bat", options).unwrap();
+    std::io::Write::write_all(&mut zip, b"@echo off\r\ncd /d \"%~dp0\"\r\necho Installing App Bundle...\r\nadb install-multiple *.apk\r\npause").unwrap();
+    
+    zip.finish().unwrap();
+    let _ = std::fs::remove_dir_all(&temp_dir);
+
+    Ok(format!("App Bundle extracted to {}", save_path))
 }
 
 
@@ -2547,3 +2674,54 @@ pub async fn import_native_profile(
     Ok(())
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MdnsService {
+    pub address: String, // IP:PORT
+    pub service_type: String, // _adb._tcp, _adb-tls-pairing._tcp, etc
+}
+
+#[tauri::command]
+pub async fn adb_mdns_services(
+    state: State<'_, Arc<AppState>>,
+) -> std::result::Result<Vec<MdnsService>, IpcError> {
+    let out = state.adb.invoker.exec(&["mdns", "services"], std::time::Duration::from_secs(10)).await.unwrap_or_default();
+    let mut services = Vec::new();
+    for line in out.lines().skip(1) { // Skip "List of discovered mdns services"
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() >= 3 {
+            services.push(MdnsService {
+                address: parts[0].to_string(),
+                service_type: parts[2].to_string(),
+            });
+        }
+    }
+    Ok(services)
+}
+
+#[tauri::command]
+pub async fn adb_pair(
+    state: State<'_, Arc<AppState>>,
+    address: String,
+    pin: String,
+) -> std::result::Result<String, IpcError> {
+    let out = state.adb.invoker.exec(&["pair", &address, &pin], std::time::Duration::from_secs(15)).await.map_err(IpcError::from)?;
+    Ok(out)
+}
+
+#[tauri::command]
+pub async fn adb_connect(
+    state: State<'_, Arc<AppState>>,
+    address: String,
+) -> std::result::Result<String, IpcError> {
+    let out = state.adb.invoker.exec(&["connect", &address], std::time::Duration::from_secs(15)).await.map_err(IpcError::from)?;
+    Ok(out)
+}
+
+#[tauri::command]
+pub async fn adb_tcpip(
+    state: State<'_, Arc<AppState>>,
+    serial: String,
+) -> std::result::Result<String, IpcError> {
+    let out = state.adb.invoker.exec(&["-s", &serial, "tcpip", "5555"], std::time::Duration::from_secs(10)).await.map_err(IpcError::from)?;
+    Ok(out)
+}

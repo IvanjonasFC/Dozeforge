@@ -87,14 +87,9 @@
 <div class="app">
   <header class="topbar">
     <!-- Logo -->
-    <a href="/" class="logo-link" title="ForgeAndroid">
+    <a href="/" class="logo-link" title="DozeForge">
       <div class="logo">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M12 2L2 7l10 5 10-5-10-5z"/>
-          <path d="M2 17l10 5 10-5"/>
-          <path d="M2 12l10 5 10-5"/>
-        </svg>
-        <span class="logo-text">ForgeAndroid</span>
+        <span class="logo-text">DozeForge</span>
       </div>
     </a>
 
@@ -130,6 +125,20 @@
     <!-- Right side: device picker + search -->
     <div class="topbar-right">
       <DevicePicker />
+      
+      {#if deviceStore.hasRootAccess}
+        <button 
+          class="root-btn" 
+          class:active={deviceStore.rootMode}
+          onclick={() => deviceStore.toggleRootMode()}
+          title="Toggle Root Mode (Access /data/data)"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+          </svg>
+          <span class="sr-only">Root Mode</span>
+        </button>
+      {/if}
       <button
         class="palette-btn"
         onclick={() => paletteOpen = true}
@@ -189,7 +198,33 @@
     flex-shrink: 0;
   }
   .logo-link:hover { text-decoration: none; }
-  .logo {
+  .topbar-right {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .root-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 4px;
+    background: transparent;
+    border: 1px solid var(--border-color);
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .root-btn:hover {
+    color: var(--text-color);
+    border-color: var(--border-hover);
+  }
+  .root-btn.active {
+    background: rgba(239, 68, 68, 0.1);
+    border-color: #ef4444;
+    color: #ef4444;
+  }  .logo {
     display: flex;
     align-items: center;
     gap: 0.5rem;

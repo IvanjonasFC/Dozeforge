@@ -28,6 +28,7 @@ impl<'a> Executor<'a> {
     pub async fn apply_batch(&self, actions: Vec<OptimizationAction>) -> Result<OptimizationReport> {
         // 1. Safety gate
         for action in &actions {
+            action.validate()?;
             self.guard_action(action)?;
         }
 

@@ -1,6 +1,6 @@
 [package]
-name = "forgeandroid"
-version = "0.5.1"
+name = "dozeforge"
+version = "1.0.0"
 description = "Surgical ADB battery and CPU auditor for Android 12+ with atomic rollback."
 authors = ["DozeForge Contributors"]
 edition = "2021"
@@ -49,6 +49,7 @@ hex = "0.4"
 
 # --- Filesystem helpers ---
 dirs = "5.0"
+zip = "2.2.1"
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]

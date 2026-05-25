@@ -503,7 +503,7 @@
             <tbody>
               {#each dangerousPermissions as dp}
                 <tr>
-                  <td><AppName pkg={dp.package} /></td>
+                  <td><AppName package={dp.package} /></td>
                   <td>
                     <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
                       {#each Object.entries(dp.permissions) as [perm, mode]}

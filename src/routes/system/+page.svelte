@@ -5,7 +5,17 @@
   import Skeleton from '$components/Skeleton.svelte';
   import type { UnlistenFn } from '@tauri-apps/api/event';
 
-  let activeTab = $state<'props' | 'logs' | 'bugreport' | 'tools'>('props');
+  let activeTab = $state<'props' | 'logs' | 'bugreport' | 'tools' | 'ram' | 'io'>('props');
+
+  // IO
+  let ioStats = $state<any[]>([]);
+  let ioLoading = $state(false);
+  let ioError = $state<string | null>(null);
+
+  // Live Task Manager (RAM + CPU)
+  let ramInfo = $state<any>(null);
+  let ramStreaming = $state(false);
+  let ramUnlisten: UnlistenFn | null = null;
 
   // Props
   let props = $state<Record<string, string> | null>(null);
@@ -13,16 +23,55 @@
   let propsLoading = $state(false);
   let propsFilter = $state('');
 
+  // Thermal
+  let thermalInfo = $state<{raw_value: number, label: string} | null>(null);
+  let thermalLoading = $state(false);
+  let thermalError = $state<string | null>(null);
+
   // Logs
   let logs = $state<string[]>([]);
   let logMode = $state<'logcat' | 'dmesg'>('logcat');
   let logStreaming = $state(false);
   let logUnlisten: UnlistenFn | null = null;
-  let logContainer: HTMLElement;
+  let logContainer: HTMLElement | undefined = $state();
+  let logHeuristics = $state<{ type: 'ANR' | 'Exception' | 'Crash', msg: string, time: string }[]>([]);
 
   // Bugreport
   let bugreportText = $state<string | null>(null);
   let bugreportLoading = $state(false);
+
+  async function startRamStream() {
+    if (!deviceStore.selected || deviceStore.selected.state !== 'device' || ramStreaming) return;
+    try {
+      ramUnlisten = await api.onRamUpdate((snap) => {
+        ramInfo = snap;
+      });
+      await api.startRamStream(deviceStore.selected.serial);
+      ramStreaming = true;
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  async function stopRamStream() {
+    try {
+      await api.stopRamStream();
+    } catch {}
+    if (ramUnlisten) { ramUnlisten(); ramUnlisten = null; }
+    ramStreaming = false;
+  }
+
+  async function loadIoStats() {
+    if (!deviceStore.selected || deviceStore.selected.state !== 'device') return;
+    ioLoading = true; ioError = null;
+    try {
+      ioStats = await api.getIoStats(deviceStore.selected.serial);
+    } catch(e) {
+      ioError = (e as DozeForgeError).message;
+    } finally {
+      ioLoading = false;
+    }
+  }
 
   async function loadProps() {
     if (!deviceStore.selected || deviceStore.selected.state !== 'device') return;
@@ -36,19 +85,43 @@
     }
   }
 
+  async function loadThermal() {
+    if (!deviceStore.selected || deviceStore.selected.state !== 'device') return;
+    thermalLoading = true;
+    try {
+      thermalInfo = await api.getThermalTelemetry(deviceStore.selected.serial);
+    } catch (e) {
+      thermalError = (e as DozeForgeError).message;
+    } finally {
+      thermalLoading = false;
+    }
+  }
+
   async function startLogs() {
     if (!deviceStore.selected || deviceStore.selected.state !== 'device' || logStreaming) return;
     logs = [];
+    logHeuristics = [];
     try {
       logUnlisten = await api.onLogBatch((newLines) => {
         logs.push(...newLines);
+        for (const l of newLines) {
+          if (l.includes('FATAL EXCEPTION')) {
+            logHeuristics.push({ type: 'Exception', msg: l.substring(0, 100), time: new Date().toLocaleTimeString() });
+          } else if (l.includes('ANR in ')) {
+            logHeuristics.push({ type: 'ANR', msg: l.substring(0, 100), time: new Date().toLocaleTimeString() });
+          } else if (l.includes('WIN DEATH')) {
+            logHeuristics.push({ type: 'Crash', msg: l.substring(0, 100), time: new Date().toLocaleTimeString() });
+          }
+        }
+        if (logHeuristics.length > 5) logHeuristics.shift();
+
         if (logs.length > 1000) {
             logs.splice(0, logs.length - 1000);
         }
         if (logContainer) {
           const isScrolledToBottom = logContainer.scrollHeight - logContainer.clientHeight <= logContainer.scrollTop + 50;
-          if (isScrolledToBottom) {
-             setTimeout(() => logContainer.scrollTop = logContainer.scrollHeight, 10);
+          if (isScrolledToBottom && logContainer) {
+             setTimeout(() => { if (logContainer) logContainer.scrollTop = logContainer.scrollHeight; }, 10);
           }
         }
       });
@@ -158,11 +231,22 @@
 
   onDestroy(() => {
     stopLogs();
+    stopRamStream();
   });
 
   $effect(() => {
-    if (deviceStore.selected?.state === 'device' && activeTab === 'props' && !props && !propsLoading) {
-      loadProps();
+    if (deviceStore.selected?.state === 'device' && activeTab === 'props') {
+      if (!props && !propsLoading) loadProps();
+      if (!thermalInfo && !thermalLoading) loadThermal();
+    }
+    if (deviceStore.selected?.state === 'device' && activeTab === 'ram' && !ramStreaming) {
+      startRamStream();
+    }
+    if (activeTab !== 'ram' && ramStreaming) {
+      stopRamStream();
+    }
+    if (deviceStore.selected?.state === 'device' && activeTab === 'io' && ioStats.length === 0 && !ioLoading) {
+      loadIoStats();
     }
   });
 
@@ -212,6 +296,8 @@
 
 <div class="tabs">
   <button class:active={activeTab === 'props'} onclick={() => activeTab = 'props'}>Build Props</button>
+  <button class:active={activeTab === 'ram'} onclick={() => activeTab = 'ram'}>Live RAM</button>
+  <button class:active={activeTab === 'io'} onclick={() => activeTab = 'io'}>Storage I/O</button>
   <button class:active={activeTab === 'logs'} onclick={() => activeTab = 'logs'}>Live Logs</button>
   <button class:active={activeTab === 'bugreport'} onclick={() => activeTab = 'bugreport'}>Bugreport</button>
   <button class:active={activeTab === 'tools'} onclick={() => activeTab = 'tools'}>System Actions</button>
@@ -220,23 +306,143 @@
 <div class="tab-content">
   {#if !deviceStore.selected}
     <div class="card p-card"><p class="muted">No device connected.</p></div>
+  {:else if activeTab === 'io'}
+    <div class="card p-card">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+        <div>
+          <h3>UFS Storage Degradation Monitor</h3>
+          <p class="muted small">Shows cumulative read/write bytes per package (requires Root Mode).</p>
+        </div>
+        <button class="btn" onclick={loadIoStats} disabled={ioLoading}>Refresh</button>
+      </div>
+      {#if ioLoading && ioStats.length === 0}
+        <Skeleton lines={5} />
+      {:else if ioError}
+        <div class="error">{ioError}</div>
+      {:else if ioStats.length > 0}
+        <div class="table-container">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>UID</th>
+                <th>Foreground Read</th>
+                <th>Foreground Write</th>
+                <th>Background Read</th>
+                <th>Background Write</th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each ioStats.sort((a,b) => (b.bg_write_bytes + b.fg_write_bytes) - (a.bg_write_bytes + a.fg_write_bytes)).slice(0, 50) as stat}
+                <tr>
+                  <td class="mono">{stat.uid}</td>
+                  <td class="mono">{(stat.fg_read_bytes / 1024 / 1024).toFixed(2)} MB</td>
+                  <td class="mono">{(stat.fg_write_bytes / 1024 / 1024).toFixed(2)} MB</td>
+                  <td class="mono">{(stat.bg_read_bytes / 1024 / 1024).toFixed(2)} MB</td>
+                  <td class="mono" style="color: var(--warn);">{(stat.bg_write_bytes / 1024 / 1024).toFixed(2)} MB</td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      {/if}
+    </div>
   {:else if deviceStore.selected.state === 'bootloader'}
     <div class="card p-card" style="border-left: 3px solid var(--accent);">
       <h3>Fastboot Mode Active</h3>
       <p class="muted">Device is currently in bootloader/fastboot mode.</p>
       <div style="margin-top: 1rem; display: flex; gap: 1rem;">
-        <button class="primary" onclick={async () => { await api.fastbootReboot(deviceStore.selected.serial); }}>Reboot to System</button>
+        <button class="primary" onclick={async () => { if (deviceStore.selected) await api.fastbootReboot(deviceStore.selected.serial); }}>Reboot to System</button>
       </div>
     </div>
   {:else if deviceStore.selected.state !== 'device'}
     <div class="card p-card"><p class="muted">Device is offline or unauthorized.</p></div>
+  {:else if activeTab === 'ram'}
+    <div class="card p-card">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+        <div>
+          <h3>Live Task Manager</h3>
+          <p class="muted small">Real-time CPU and Memory (RSS) usage via ADB top stream. (Deep Sleep not interrupted)</p>
+        </div>
+        {#if ramStreaming}
+          <div class="badge" style="background: var(--accent); color: white; border: none; font-size: 11px;">LIVE</div>
+        {/if}
+      </div>
+      {#if !ramInfo}
+        <Skeleton lines={5} />
+      {:else}
+        <div style="display: flex; gap: 1rem; margin-bottom: 1rem;">
+          <div class="stat-box" style="flex: 1; padding: 1rem; background: var(--bg-hover); border-radius: 6px;">
+            <div class="muted small">Total CPU (Foreground Apps)</div>
+            <div style="font-size: 1.5rem; font-weight: bold;">{ramInfo.total_cpu_percent.toFixed(1)}%</div>
+          </div>
+          <div class="stat-box" style="flex: 1; padding: 1rem; background: var(--bg-hover); border-radius: 6px;">
+            <div class="muted small">Total RSS (Memory)</div>
+            <div style="font-size: 1.5rem; font-weight: bold; color: var(--warn);">{(ramInfo.total_rss_kb / 1024).toFixed(0)} MB</div>
+          </div>
+          <div class="stat-box" style="flex: 1; padding: 1rem; background: var(--bg-hover); border-radius: 6px;">
+            <div class="muted small">Zombie Processes</div>
+            <div style="font-size: 1.5rem; font-weight: bold; color: var(--good);">{ramInfo.zombie_count}</div>
+          </div>
+        </div>
+        <h4>Top Background Processes</h4>
+        <div class="table-container" style="margin-top: 1rem; max-height: 50vh; overflow-y: auto;">
+          <table class="data-table">
+            <thead style="position: sticky; top: 0; background: var(--bg-1);">
+              <tr>
+                <th>Package / Command</th>
+                <th>PID</th>
+                <th>CPU %</th>
+                <th>RSS (Memory)</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each ramInfo.rows.slice(0, 30) as proc}
+                <tr>
+                  <td class="mono" style="font-size: 0.9rem;">{proc.package || proc.args}</td>
+                  <td>{proc.pid}</td>
+                  <td class="mono">{proc.cpu_percent.toFixed(1)}%</td>
+                  <td class="mono">{(proc.rss_kb / 1024).toFixed(1)} MB</td>
+                  <td style="text-align: right;">
+                    {#if proc.package}
+                      <button class="action-btn danger" style="padding: 0.25rem 0.5rem; font-size: 0.8rem;" onclick={async () => {
+                        if (!deviceStore.selected) return;
+                        await api.forceStopPackage(deviceStore.selected.serial, proc.package);
+                      }}>Force Stop</button>
+                    {/if}
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      {/if}
+    </div>
   {:else if activeTab === 'props'}
     <div class="card p-card">
-      {#if propsLoading}
+      {#if propsLoading || thermalLoading}
         <Skeleton lines={10} />
       {:else if propsError}
         <div class="error">{propsError}</div>
       {:else if props}
+        {#if thermalInfo}
+          <div class="card" style="margin-bottom: 1rem; padding: 1rem; border: 1px solid var(--accent);">
+            <h4 style="margin: 0 0 0.5rem 0;">Thermal Telemetry</h4>
+            <div style="display: flex; gap: 1rem;">
+              <div class="stat-box" style="flex: 1; padding: 0.75rem; background: var(--bg-hover); border-radius: 6px;">
+                <div class="muted small">Thermal Status Label</div>
+                <div style="font-size: 1.25rem; font-weight: bold; color: {thermalInfo.raw_value >= 3 ? 'var(--danger)' : 'var(--good)'};">{thermalInfo.label}</div>
+              </div>
+              <div class="stat-box" style="flex: 1; padding: 0.75rem; background: var(--bg-hover); border-radius: 6px;">
+                <div class="muted small">Raw Value</div>
+                <div style="font-size: 1.25rem; font-weight: bold;" class="mono">{thermalInfo.raw_value}</div>
+              </div>
+            </div>
+          </div>
+        {/if}
+        <div class="filter-bar">
+          <input type="search" placeholder="Filter properties..." bind:value={propsFilter} />
+        </div>
         <div class="scroll-y props-container">
           <div class="props-list">
             {#each visibleProps as [k, v]}
@@ -272,6 +478,17 @@
         <button onclick={() => logs = []} class="ghost">Clear</button>
         <span class="muted" style="margin-left: auto; font-size: 11px;">Max 1000 lines buffer</span>
       </div>
+      {#if logHeuristics.length > 0}
+        <div style="margin-bottom: 1rem; border: 1px solid var(--warn); border-radius: 6px; padding: 0.5rem; background: var(--bg-hover);">
+          <h4 style="margin: 0 0 0.5rem 0; color: var(--warn); font-size: 0.9rem;">Heuristics: Detected Issues</h4>
+          {#each logHeuristics as h}
+            <div class="mono small" style="margin-bottom: 0.25rem;">
+              <span class="badge" style="background: var(--bg-3); margin-right: 0.5rem;">{h.time}</span>
+              <strong style="color: {h.type === 'ANR' ? 'var(--warn)' : 'var(--error)'};">{h.type}:</strong> {h.msg}
+            </div>
+          {/each}
+        </div>
+      {/if}
       <div class="log-viewer" bind:this={logContainer}>
         {#if logs.length === 0}
           <div class="empty-logs muted">No logs yet. Press Start Stream.</div>

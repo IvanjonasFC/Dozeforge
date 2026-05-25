@@ -238,4 +238,39 @@ impl OptimizationAction {
             _ => Duration::from_secs(15),
         }
     }
+
+    /// Performs strict input validation to prevent ADB shell command injection.
+    pub fn validate(&self) -> crate::error::Result<()> {
+        if let Some(pkg) = self.target_package() {
+            if !pkg.is_valid() {
+                return Err(crate::error::Error::other(format!("Invalid package name format: {}", pkg)));
+            }
+        }
+        match self {
+            Self::SetPrivateDns { hostname: Some(host), .. } => {
+                if host.is_empty() || host.len() > 255 || !host.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-') {
+                    return Err(crate::error::Error::other(format!("Invalid DNS hostname: {}", host)));
+                }
+            }
+            Self::CompilePackage { mode, .. } => {
+                let valid_modes = ["speed", "speed-profile", "everything", "verify", "quicken", "extract", "space"];
+                if !valid_modes.contains(&mode.as_str()) {
+                    return Err(crate::error::Error::other(format!("Invalid compilation mode: {}", mode)));
+                }
+            }
+            Self::SetAvrcpVersion { version } => {
+                let valid_versions = ["1.3", "1.4", "1.5", "1.6"];
+                if !valid_versions.contains(&version.as_str()) {
+                    return Err(crate::error::Error::other(format!("Invalid AVRCP version: {}", version)));
+                }
+            }
+            Self::SetAppOp { op, .. } => {
+                if op.is_empty() || !op.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+                    return Err(crate::error::Error::other(format!("Invalid AppOp code: {}", op)));
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
 }

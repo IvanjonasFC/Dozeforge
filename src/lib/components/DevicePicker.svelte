@@ -2,9 +2,47 @@
   import { deviceStore } from '$stores/device.svelte';
   import type { Device } from '$types';
 
+  import { api } from '$lib/tauri/api';
+  import PairingModal from './PairingModal.svelte';
+
+  let pairingAddress = $state('');
+  let pairingOpen = $state(false);
+
   async function onSelect(e: Event) {
-    const serial = (e.target as HTMLSelectElement).value;
-    const found = deviceStore.devices.find((d) => d.serial === serial);
+    const value = (e.target as HTMLSelectElement).value;
+    if (!value) return;
+
+    if (value.startsWith('pair_')) {
+      pairingAddress = value.replace('pair_', '');
+      pairingOpen = true;
+      (e.target as HTMLSelectElement).value = deviceStore.selected?.serial ?? '';
+      return;
+    }
+    if (value.startsWith('conn_')) {
+      const address = value.replace('conn_', '');
+      try {
+        await api.adbConnect(address);
+        await deviceStore.refresh();
+      } catch (err) {
+        alert('Failed to connect: ' + err);
+      }
+      (e.target as HTMLSelectElement).value = deviceStore.selected?.serial ?? '';
+      return;
+    }
+    if (value.startsWith('tcpip_')) {
+      const serial = value.replace('tcpip_', '');
+      try {
+        await api.adbTcpip(serial);
+        alert('TCP/IP mode enabled on 5555. You can now disconnect the USB cable and pair via Wi-Fi.');
+        await deviceStore.refresh();
+      } catch (err) {
+        alert('Failed to enable TCP/IP: ' + err);
+      }
+      (e.target as HTMLSelectElement).value = deviceStore.selected?.serial ?? '';
+      return;
+    }
+
+    const found = deviceStore.devices.find((d) => d.serial === value);
     if (found) await deviceStore.select(found);
   }
 
@@ -30,16 +68,48 @@
     <select
       value={deviceStore.selected?.serial ?? ''}
       onchange={onSelect}
-      disabled={deviceStore.loading || deviceStore.devices.length === 0}
+      disabled={deviceStore.loading}
       aria-label="Select device"
     >
-      {#if deviceStore.devices.length === 0}
+      {#if deviceStore.devices.length === 0 && deviceStore.mdnsServices.length === 0}
         <option value="">No devices detected</option>
       {:else}
         <option value="" disabled>Select device…</option>
-        {#each deviceStore.devices as device (device.serial)}
-          <option value={device.serial}>{label(device)}</option>
-        {/each}
+
+        {#if deviceStore.devices.length > 0}
+          <optgroup label="Connected Devices">
+            {#each deviceStore.devices as device (device.serial)}
+              <option value={device.serial}>{label(device)}</option>
+            {/each}
+          </optgroup>
+          {#if deviceStore.devices.some(d => d.state === 'device' && !d.serial.includes(':'))}
+            <optgroup label="Enable Wireless (USB)">
+              {#each deviceStore.devices as device (device.serial)}
+                {#if device.state === 'device' && !device.serial.includes(':')}
+                  <option value="tcpip_{device.serial}">Enable TCP/IP on {label(device)}</option>
+                {/if}
+              {/each}
+            </optgroup>
+          {/if}
+        {/if}
+
+        {#if deviceStore.mdnsServices.filter(s => !deviceStore.devices.some(d => d.serial === s.address)).length > 0}
+          <optgroup label="Discovered Network Devices">
+            {#each deviceStore.mdnsServices.filter(s => !deviceStore.devices.some(d => d.serial === s.address)) as service (service.address + service.service_type)}
+              {#if service.service_type.includes('pairing')}
+                <option value="pair_{service.address}">Pair: {service.address}</option>
+              {:else if service.service_type.includes('connect')}
+                <option value="conn_{service.address}">Connect: {service.address}</option>
+              {:else}
+                <option value="conn_{service.address}">Connect: {service.address}</option>
+              {/if}
+            {/each}
+          </optgroup>
+        {:else}
+          <optgroup label="Network Devices">
+            <option disabled value="fw_warn">None found (Check Windows Firewall)</option>
+          </optgroup>
+        {/if}
       {/if}
     </select>
     <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" class="chev">
@@ -52,6 +122,7 @@
     </svg>
   </button>
 </div>
+<PairingModal address={pairingAddress} bind:open={pairingOpen} />
 
 <style>
   .picker {

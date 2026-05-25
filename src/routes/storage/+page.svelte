@@ -127,12 +127,8 @@
     if (!deviceStore.selected) return;
     loadingInventory = true; error = null;
     try {
-      const [inv, nu] = await Promise.all([
-        cache.getOrFetch('inventory:' + deviceStore.selected.serial, TTL.inventory, () => api.storageInventory(deviceStore.selected!.serial)),
-        cache.getOrFetch('net_usage:' + deviceStore.selected.serial, TTL.inventory, () => api.getNetworkUsage(deviceStore.selected!.serial))
-      ]);
+      const inv = await cache.getOrFetch('inventory:' + deviceStore.selected.serial, TTL.inventory, () => api.storageInventory(deviceStore.selected!.serial));
       inventory = inv;
-      netUsage = nu;
     } catch (e) {
       error = (e as DozeForgeError).message;
     } finally {
@@ -454,7 +450,7 @@
                     <AppName package={p.package} />
                   </td>
                   <td class="mono" style="text-align: right; vertical-align: middle;">
-                    <span class="muted" style="font-size: 11px;">{netMap.has(p.package) ? fmtBytes(netMap.get(p.package)!.rx_bytes + netMap.get(p.package)!.tx_bytes) : '0 B'}</span>
+                    <span class="muted" style="font-size: 11px;">0 B</span>
                   </td>
                   <td style="text-align: right; vertical-align: middle;">
                     <span class="badge" style="font-family: var(--font-mono); font-size: 11px;">{fmtBytes(p.apk_bytes)}</span>

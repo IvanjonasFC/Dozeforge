@@ -24,6 +24,8 @@ pub mod sleep_timeline;
 pub mod standby;
 pub mod system_settings;
 pub mod usage_stats;
+pub mod meminfo;
+pub mod io_stats;
 
 pub use appops::AppOpsParser;
 
@@ -42,6 +44,13 @@ pub struct PackageName(pub String);
 
 impl PackageName {
     pub fn as_str(&self) -> &str { &self.0 }
+
+    pub fn is_valid(&self) -> bool {
+        if self.0.is_empty() || self.0.len() > 255 {
+            return false;
+        }
+        self.0.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
+    }
 }
 
 impl std::fmt::Display for PackageName {

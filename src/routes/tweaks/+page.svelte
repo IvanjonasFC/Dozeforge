@@ -19,6 +19,10 @@
   let stayAwakeLoading = $state(false);
   let darkModeLoading = $state(false);
 
+  let displaySize = $state('');
+  let displayDensity = $state('');
+  let displayLoading = $state(false);
+
   async function run<T>(fn: () => Promise<T>, setLoading: (v: boolean) => void, msg: string) {
     setLoading(true); error = null; success = null;
     try { await fn(); success = msg; }
@@ -117,6 +121,32 @@
       </div>
     </div>
 
+  </div>
+
+  <div class="section-label" style="margin-top: 2rem;">Display Overclocking</div>
+  <div class="grid">
+    <div class="card tweak-card">
+      <div class="tweak-header">
+        <div>
+          <h3>Custom Resolution & Density</h3>
+          <p class="muted small">Force custom pixel dimensions (WxH) or DPI. Incorrect values may make the UI unusable. Use Reset if stuck.</p>
+        </div>
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+      </div>
+      <div class="tweak-actions" style="flex-direction: column; align-items: stretch; gap: 0.5rem;">
+        <div style="display: flex; gap: 0.5rem;">
+          <input type="text" placeholder="1080x2400" bind:value={displaySize} style="flex: 1;" />
+          <button class="btn outline" onclick={() => run(() => api.setDisplaySize(serial(), displaySize), v => displayLoading = v, 'Resolution applied.')} disabled={displayLoading || !displaySize}>Apply Size</button>
+        </div>
+        <div style="display: flex; gap: 0.5rem;">
+          <input type="text" placeholder="420" bind:value={displayDensity} style="flex: 1;" />
+          <button class="btn outline" onclick={() => run(() => api.setDisplayDensity(serial(), displayDensity), v => displayLoading = v, 'Density applied.')} disabled={displayLoading || !displayDensity}>Apply DPI</button>
+        </div>
+        <button class="btn danger" style="margin-top: 0.5rem;" onclick={() => run(() => api.resetDisplay(serial()), v => displayLoading = v, 'Display reset to factory defaults.')} disabled={displayLoading}>
+          Reset Display to Factory Defaults
+        </button>
+      </div>
+    </div>
   </div>
 
   <div class="section-label" style="margin-top: 2rem;">System Behavior</div>

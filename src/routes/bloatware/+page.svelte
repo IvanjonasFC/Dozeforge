@@ -6,6 +6,7 @@
   import { labelStore } from '$stores/labels.svelte';
   import AppName from '$components/AppName.svelte';
   import RiskBadge from '$components/RiskBadge.svelte';
+  import { createVirtualizer } from '@tanstack/svelte-virtual';
   import type {
     BloatwareReport,
     BloatwareRecommendation,
@@ -25,6 +26,9 @@
   let disabledPackages = $state<Set<string>>(new Set());
   let tierFilter = $state<'all' | 'moderate' | 'elevated' | 'critical'>('all');
   let recFilter = $state<'all' | 'disabled_only' | Recommendation>('all');
+
+  let virtualListEl = $state<HTMLElement>();
+  let virtualizer = $state<any>();
 
   // ---- Preset modal state ----
   let activePresetPreview = $state<{ preset: BloatPresetDto; pkgs: string[] } | null>(null);
@@ -105,15 +109,32 @@
     if (safeOnly.length === 0) return;
     if (!confirm(`Disable ${safeOnly.length} package${safeOnly.length === 1 ? '' : 's'} via "pm disable-user --user 0"? This is fully reversible from this same page.`)) return;
     busy = true; error = null; report = null;
+    const backup = new Set(disabledPackages);
+    // Optimistic update: instantly mark them as disabled without a full ADB refresh
+    for (const p of safeOnly) {
+      disabledPackages.add(p);
+    }
+    // Re-assign to trigger reactivity
+    disabledPackages = new Set(disabledPackages);
+
     try {
       report = await api.disableBloatware(deviceStore.selected.serial, safeOnly);
       cache.invalidatePrefix('packages:');
       cache.invalidatePrefix('inventory:');
       cache.invalidatePrefix('overview:');
       cache.invalidatePrefix('miscat:');
+      
+      // Rollback specifically failed packages
+      if (report && report.failed.length > 0) {
+        for (const [pkg, _err] of report.failed) {
+          disabledPackages.delete(pkg);
+        }
+        disabledPackages = new Set(disabledPackages);
+      }
+      
       selected = new Set();
-      await refresh();
     } catch (e) {
+      disabledPackages = backup;
       error = (e as DozeForgeError).message;
     } finally { busy = false; }
   }
@@ -121,15 +142,32 @@
   async function applyEnable() {
     if (!deviceStore.selected || selected.size === 0) return;
     busy = true; error = null; report = null;
+    const backup = new Set(disabledPackages);
+    // Optimistic update: instantly mark them as enabled
+    for (const p of selected) {
+      disabledPackages.delete(p);
+    }
+    // Re-assign to trigger reactivity
+    disabledPackages = new Set(disabledPackages);
+
     try {
       report = await api.enableBloatware(deviceStore.selected.serial, [...selected]);
       cache.invalidatePrefix('packages:');
       cache.invalidatePrefix('inventory:');
       cache.invalidatePrefix('overview:');
       cache.invalidatePrefix('miscat:');
+      
+      // Rollback specifically failed packages
+      if (report && report.failed.length > 0) {
+        for (const [pkg, _err] of report.failed) {
+          disabledPackages.add(pkg);
+        }
+        disabledPackages = new Set(disabledPackages);
+      }
+
       selected = new Set();
-      await refresh();
     } catch (e) {
+      disabledPackages = backup;
       error = (e as DozeForgeError).message;
     } finally { busy = false; }
   }
@@ -268,49 +306,57 @@
       </p>
     {/if}
 
-    <div class="scroll-y" style="margin-top: 1rem;">
-      <table>
-        <thead>
-          <tr>
-            <th style="width: 28px;"></th>
-            <th>App</th>
-            <th>UID</th>
-            <th>Risk</th>
-            <th>Recommendation</th>
-            <th>Why</th>
-          </tr>
-        </thead>
-        <tbody>
-          {#each filtered as r (r.package)}
-            {@const meta = recBadgeMeta(r.recommendation)}
-            <tr class:row-rec-safe={r.recommendation === 'safe_to_disable'}
-                class:row-rec-bloat={r.recommendation === 'preinstalled_bloat'}
-                class:row-rec-careful={r.recommendation === 'system_use_with_care'}
-                class:row-rec-critical={r.recommendation === 'do_not_touch'}>
-              <td>
-                <input
-                  type="checkbox"
-                  checked={selected.has(r.package)}
-                  onchange={() => toggle(r.package)}
-                  disabled={r.recommendation === 'do_not_touch'}
-                />
-              </td>
-              <td><AppName package={r.package} size="sm" /></td>
-              <td class="mono">{counts ? '' : ''}{recommendations.find((x) => x.package === r.package)?.tier === 'critical' ? '—' : ''}</td>
-              <td><RiskBadge tier={r.tier} /></td>
-              <td>
-                {#if disabledPackages.has(r.package)}
-                  <span class="badge" style="font-family: var(--font-mono); font-size: 10px; margin-right: 0.5rem; background: var(--bg-3);">DISABLED</span>
-                {/if}
-                <span class="rec-badge {meta.cls}" title={meta.label}>
-                  <span class="rec-icon">{meta.icon}</span> {meta.label}
-                </span>
-              </td>
-              <td class="muted small">{r.notes}</td>
+    <div bind:this={virtualListEl} class="scroll-y" style="margin-top: 1rem; max-height: 60vh; overflow-y: auto;">
+      <div style="position: relative; height: {virtualizer ? virtualizer.getTotalSize() : 0}px; width: 100%;">
+        <table style="width: 100%; display: block;">
+          <thead style="display: table; width: 100%; table-layout: fixed; position: sticky; top: 0; z-index: 10; background: var(--bg-1);">
+            <tr>
+              <th style="width: 32px;"></th>
+              <th style="width: 25%;">App</th>
+              <th style="width: 10%;">UID</th>
+              <th style="width: 10%;">Risk</th>
+              <th style="width: 20%;">Recommendation</th>
+              <th style="width: 35%;">Why</th>
             </tr>
-          {/each}
-        </tbody>
-      </table>
+          </thead>
+          {#if virtualizer}
+            <tbody style="display: block; position: relative;">
+              {#each virtualizer.getVirtualItems() as virtualRow (virtualRow.index)}
+                {@const r = filtered[virtualRow.index]}
+                {#if r}
+                  {@const meta = recBadgeMeta(r.recommendation)}
+                  <tr style="position: absolute; top: 0; left: 0; width: 100%; transform: translateY({virtualRow.start}px); display: table; table-layout: fixed;"
+                      class:row-rec-safe={r.recommendation === 'safe_to_disable'}
+                      class:row-rec-bloat={r.recommendation === 'preinstalled_bloat'}
+                      class:row-rec-careful={r.recommendation === 'system_use_with_care'}
+                      class:row-rec-critical={r.recommendation === 'do_not_touch'}>
+                    <td style="width: 32px; text-align: center;">
+                      <input
+                        type="checkbox"
+                        checked={selected.has(r.package)}
+                        onchange={() => toggle(r.package)}
+                        disabled={r.recommendation === 'do_not_touch'}
+                      />
+                    </td>
+                    <td style="width: 25%; overflow: hidden; text-overflow: ellipsis;"><AppName package={r.package} size="sm" /></td>
+                    <td style="width: 10%;" class="mono">{counts ? '' : ''}{recommendations.find((x) => x.package === r.package)?.tier === 'critical' ? '—' : ''}</td>
+                    <td style="width: 10%;"><RiskBadge tier={r.tier} /></td>
+                    <td style="width: 20%;">
+                      {#if disabledPackages.has(r.package)}
+                        <span class="badge" style="font-family: var(--font-mono); font-size: 10px; margin-right: 0.5rem; background: var(--bg-3);">DISABLED</span>
+                      {/if}
+                      <span class="rec-badge {meta.cls}" title={meta.label}>
+                        <span class="rec-icon">{meta.icon}</span> {meta.label}
+                      </span>
+                    </td>
+                    <td style="width: 35%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" class="muted small" title={r.notes}>{r.notes}</td>
+                  </tr>
+                {/if}
+              {/each}
+            </tbody>
+          {/if}
+        </table>
+      </div>
     </div>
     <p class="muted" style="margin-top: 0.75rem;">
       Showing {filtered.length} of {recommendations.length} packages.

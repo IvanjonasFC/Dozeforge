@@ -3,7 +3,9 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
+use std::sync::Arc;
 use tokio::process::Command;
+use tokio::sync::Semaphore;
 use tokio::time::timeout;
 use tracing::debug;
 
@@ -24,16 +26,23 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 #[derive(Debug, Clone)]
 pub struct AdbInvoker {
     pub adb_path: PathBuf,
+    pub semaphore: Arc<Semaphore>,
 }
 
 impl AdbInvoker {
-    pub fn new(adb_path: PathBuf) -> Self { Self { adb_path } }
+    pub fn new(adb_path: PathBuf) -> Self { 
+        Self { 
+            adb_path,
+            semaphore: Arc::new(Semaphore::new(5)),
+        } 
+    }
 
     pub async fn shell(&self, serial: &DeviceSerial, cmd: &str, deadline: Duration) -> Result<String> {
         self.exec(&["-s", serial.as_str(), "shell", cmd], deadline).await
     }
 
     pub async fn exec(&self, args: &[&str], deadline: Duration) -> Result<String> {
+        let _permit = self.semaphore.acquire().await.unwrap();
         debug!(target: "dozeforge::adb", ?args, "executing adb");
 
         let fut = async {

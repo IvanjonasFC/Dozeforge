@@ -183,7 +183,8 @@
         <circle cx="100" cy="100" r="70" stroke="var(--bg-3)" stroke-width="14" fill="none"/>
         <circle cx="100" cy="100" r="70" stroke={ringColorVar} stroke-width="14" stroke-linecap="round"
                 fill="none" transform="rotate(-90 100 100)"
-                stroke-dasharray={RING_CIRC} stroke-dashoffset={ringOffset} class="ring-arc"/>
+                stroke-dasharray={RING_CIRC} stroke-dashoffset={ringOffset} class="ring-arc"
+                style="filter: drop-shadow(0 0 8px {ringColorVar});"/>
         {#if healthScore !== null}
           <text x="100" y="98" text-anchor="middle" class="ring-num">{healthScore}</text>
           <text x="100" y="125" text-anchor="middle" class="ring-unit">/ 100</text>
@@ -216,7 +217,7 @@
   <h3 class="section-title">Recommended actions</h3>
   <div class="action-grid">
     <button class="action-card" onclick={() => goto('/sleep/')}>
-      <div class="action-icon" style="color: var(--bad)">☾</div>
+      <div class="action-icon" style="color: var(--bad); background: color-mix(in srgb, var(--bad) 15%, transparent); box-shadow: 0 0 15px color-mix(in srgb, var(--bad) 20%, transparent);">☾</div>
       <div class="action-body">
         <div class="action-title">
           {#if miscat.length === 0}
@@ -238,7 +239,7 @@
     </button>
 
     <button class="action-card" onclick={() => goto('/privacy/')}>
-      <div class="action-icon" style="color: var(--warn)">◊</div>
+      <div class="action-icon" style="color: var(--warn); background: color-mix(in srgb, var(--warn) 15%, transparent); box-shadow: 0 0 15px color-mix(in srgb, var(--warn) 20%, transparent);">◊</div>
       <div class="action-body">
         <div class="action-title">
           {#if privacy?.dns.mode === 'hostname'}
@@ -261,7 +262,7 @@
     </button>
 
     <button class="action-card" onclick={() => goto('/storage/')}>
-      <div class="action-icon" style="color: var(--accent)">◰</div>
+      <div class="action-icon" style="color: var(--accent); background: color-mix(in srgb, var(--accent) 15%, transparent); box-shadow: 0 0 15px color-mix(in srgb, var(--accent) 20%, transparent);">◰</div>
       <div class="action-body">
         <div class="action-title">
           {#if cacheBytes > 1_000_000_000}
@@ -360,8 +361,8 @@
     content: '';
     position: absolute;
     inset: 0;
-    background: radial-gradient(circle at 15% 50%, currentColor 0%, transparent 60%);
-    opacity: 0.04;
+    background: radial-gradient(circle at 15% 50%, currentColor 0%, transparent 50%);
+    opacity: 0.08;
     pointer-events: none;
   }
   .hero-card[data-band="good"]  { color: var(--good); }
@@ -406,20 +407,22 @@
     display: flex; gap: 1rem; padding: 1.15rem 1.25rem;
     background: var(--bg-1); border: 1px solid var(--border);
     border-radius: var(--radius-lg); text-align: left;
-    cursor: pointer; transition: border-color var(--t-base), transform var(--t-fast), background var(--t-fast);
+    cursor: pointer; transition: all var(--t-fast);
     width: 100%;
     color: inherit; font-family: inherit;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.2);
   }
   .action-card:hover {
     border-color: var(--border-strong);
     background: var(--bg-2);
-    transform: translateY(-1px);
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(0,0,0,0.3);
   }
   .action-icon {
     font-size: 28px; line-height: 1; flex-shrink: 0;
     width: 44px; height: 44px;
     display: flex; align-items: center; justify-content: center;
-    background: var(--bg-3); border-radius: var(--radius);
+    border-radius: 50%; /* Circle icon looks friendlier */
   }
   .action-body { flex: 1; min-width: 0; }
   .action-title {

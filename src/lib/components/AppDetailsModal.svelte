@@ -4,6 +4,7 @@
   import { api } from '$lib/tauri/api';
   import AppName from './AppName.svelte';
   import { page } from '$app/stores';
+  import { save } from '@tauri-apps/plugin-dialog';
 
   let details = $state<any>(null);
   let loading = $state(false);
@@ -30,7 +31,7 @@
     loading = true;
     error = null;
     try {
-      details = await api.getSingleAppDetails(deviceStore.selected!.serial, pkg);
+      details = await api.getSingleAppDetails(deviceStore.selected!.serial, pkg, deviceStore.rootMode);
     } catch (e) {
       error = (e as Error).message;
     } finally {
@@ -49,19 +50,41 @@
       else if (action === 'force_stop') await api.forceStopPackage(deviceStore.selected.serial, pkg);
       else if (action === 'ignore_wakelocks') await api.setAppOps(deviceStore.selected.serial, pkg, 'WAKE_LOCK', 'ignore');
       else if (action === 'ignore_background') await api.setAppOps(deviceStore.selected.serial, pkg, 'RUN_ANY_IN_BACKGROUND', 'ignore');
+      else if (action === 'block_exact_alarms') await api.setAppOps(deviceStore.selected.serial, pkg, 'SCHEDULE_EXACT_ALARM', 'ignore');
+      else if (action === 'block_sensors') await api.setAppOps(deviceStore.selected.serial, pkg, 'SENSOR', 'ignore');
       else if (action === 'force_restricted') await api.setStandbyBucket(deviceStore.selected.serial, pkg, 'restricted');
       else if (action === 'clear_data') await api.clearAppData(deviceStore.selected.serial, pkg);
       else if (action === 'uninstall') await api.uninstallPackage(deviceStore.selected.serial, pkg);
       else if (action === 'settings') await api.openAppSettings(deviceStore.selected.serial, pkg);
       else if (action === 'disable') await api.disableBloatware(deviceStore.selected.serial, [pkg]);
       else if (action === 'enable') await api.enableBloatware(deviceStore.selected.serial, [pkg]);
+      else if (action === 'extract_apk') {
+        const savePath = await save({
+          filters: [{ name: 'App Bundle (ZIP)', extensions: ['zip'] }],
+          defaultPath: `${pkg}_bundle.zip`
+        });
+        if (savePath) {
+          success = await api.extractApk(deviceStore.selected.serial, pkg, savePath);
+          loading = false;
+          return;
+        }
+      }
+      else if (action === 'copy_tasker_intent') {
+        const script = `# Tasker / Shell script to restrict ${pkg}
+cmd appops set ${pkg} WAKE_LOCK ignore
+cmd appops set ${pkg} RUN_ANY_IN_BACKGROUND ignore
+cmd appops set ${pkg} SCHEDULE_EXACT_ALARM ignore
+am set-standby-bucket ${pkg} restricted`;
+        await navigator.clipboard.writeText(script);
+        success = 'Tasker / Shell script copied to clipboard!';
+      }
 
       if (action === 'settings') {
         success = 'Opened on device';
       } else if (action === 'uninstall') {
         success = 'App uninstalled';
         setTimeout(() => appModalStore.close(), 1500);
-      } else {
+      } else if (action !== 'copy_tasker_intent') {
         success = `Action applied successfully`;
         await loadDetails(pkg);
       }
@@ -158,6 +181,8 @@
             {:else if context === 'battery'}
               <button class="action-btn" onclick={() => executeAction('ignore_wakelocks')}>Block Wakelocks</button>
               <button class="action-btn" onclick={() => executeAction('ignore_background')}>Block Background</button>
+              <button class="action-btn" onclick={() => executeAction('block_exact_alarms')}>Block Exact Alarms</button>
+              <button class="action-btn" onclick={() => executeAction('block_sensors')}>Block Sensors</button>
               <button class="action-btn" onclick={() => executeAction('force_restricted')}>Force Restricted</button>
               <button class="action-btn" onclick={() => executeAction('force_stop')}>Force Stop</button>
             {:else}
@@ -171,7 +196,10 @@
               {/if}
               <button class="action-btn" onclick={() => executeAction('ignore_wakelocks')}>Block Wakelocks</button>
               <button class="action-btn" onclick={() => executeAction('ignore_background')}>Block Background</button>
-              <button class="action-btn" onclick={() => executeAction('force_restricted')}>Force Restricted</button>
+              <button class="action-btn" onclick={() => executeAction('block_exact_alarms')}>Block Exact Alarms</button>
+              <button class="action-btn" onclick={() => executeAction('block_sensors')}>Block Sensors</button>
+              <button class="action-btn" onclick={() => executeAction('extract_apk')}>Extract APK to PC</button>
+              <button class="action-btn" onclick={() => executeAction('copy_tasker_intent')}>Copy Tasker Script</button>
               <button class="action-btn" onclick={() => executeAction('settings')}>Open on Phone</button>
             {/if}
           </div>

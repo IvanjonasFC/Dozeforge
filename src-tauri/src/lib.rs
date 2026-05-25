@@ -51,9 +51,12 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             ipc::commands::list_devices,
             ipc::commands::probe_capabilities,
+            ipc::commands::check_root,
             ipc::commands::audit_device,
             ipc::commands::sample_cpu,
             ipc::commands::list_wakeup_sources,
+            ipc::commands::get_live_ram,
+            ipc::commands::get_io_stats,
             ipc::commands::list_packages,
             ipc::commands::classify_packages,
             ipc::commands::apply_optimization,
@@ -156,11 +159,17 @@ pub fn run() {
             ipc::commands::fastboot_flash,
             ipc::commands::export_native_profile,
             ipc::commands::import_native_profile,
+            ipc::commands::adb_mdns_services,
+            ipc::commands::adb_pair,
+            ipc::commands::adb_connect,
+            ipc::commands::adb_tcpip,
             ipc::commands::launch_scrcpy,
             ipc::diagnostics::get_system_properties,
             ipc::diagnostics::generate_bugreport,
             ipc::diagnostics::start_log_stream,
             ipc::diagnostics::stop_log_stream,
+            ipc::streaming::start_ram_stream,
+            ipc::streaming::stop_ram_stream,
         ])
         .run(tauri::generate_context!())
         .expect("error while running DozeForge");
