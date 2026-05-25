@@ -122,7 +122,7 @@
     <div class="row" style="justify-content: space-between; align-items: flex-end;">
       <div>
         <h3 style="margin: 0;">Action history</h3>
-        <p class="muted footnote">Persistent log of every action applied by DozeForge.</p>
+        <p class="muted footnote">Persistent log of every action applied by ForgeAndroid.</p>
       </div>
       <button onclick={refreshLog}>Refresh</button>
     </div>
@@ -163,8 +163,8 @@
   <div class="card flat about">
     <h4>About</h4>
     <p class="muted">
-      <strong>DozeForge</strong> v0.5.0 — Android 12+ ADB power auditor.
-      Telemetry: opt-in, local-only. Set <code>DOZEFORGE_NO_LOG=1</code> to disable file logging.
+      <strong>ForgeAndroid</strong> v0.5.1 — Android 12+ ADB power auditor.
+      Telemetry: opt-in, local-only. Set <code>FORGEANDROID_NO_LOG=1</code> to disable file logging.
     </p>
   </div>
 {/if}
