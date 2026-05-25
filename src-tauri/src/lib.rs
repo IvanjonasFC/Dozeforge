@@ -8,6 +8,7 @@
 //! - `snapshot`    : differential snapshots and rollback
 //! - `export`      : shell-script and MacroDroid exporters
 //! - `ipc`         : Tauri commands exposed to the SvelteKit UI
+//! - `security`    : input validators that gate every Tauri command
 //! - `telemetry`   : structured logging via `tracing`
 //! - `state`       : shared `AppState` held by Tauri
 //! - `error`       : crate-wide `Error` and `Result` types
@@ -19,6 +20,7 @@ pub mod heuristics;
 pub mod ipc;
 pub mod optimizer;
 pub mod parsers;
+pub mod security;
 pub mod snapshot;
 pub mod state;
 pub mod telemetry;
