@@ -1,0 +1,21 @@
+JOB SCHEDULER (dumpsys jobscheduler)
+Registered 6 jobs:
+  JOB #u0a211/91021: 12345abc com.example.spammer/.PeriodicSyncJob
+    Service: ComponentInfo{com.example.spammer/.PeriodicSyncJob}
+    Periodic: true Period: +15m0s0ms
+    Constraints: CHARGING=false NETWORK=ANY IDLE=false
+  JOB #u0a211/91022: 67890def com.example.spammer/.ImmediateJob
+    Service: ComponentInfo{com.example.spammer/.ImmediateJob}
+    Periodic: false
+  JOB #u0a86/12001: aabbccdd com.google.android.gms/.gcm.GcmTaskService
+    Service: ComponentInfo{com.google.android.gms/.gcm.GcmTaskService}
+    Periodic: true Period: +30m0s0ms
+  JOB #u0a333/30001: deadbeef com.example.benign/.OneShotJob
+    Service: ComponentInfo{com.example.benign/.OneShotJob}
+    Periodic: false
+  JOB #u0a86/12002: 11223344 com.google.android.gms/.gcm.GcmTaskService
+    Service: ComponentInfo{com.google.android.gms/.gcm.GcmTaskService}
+    Periodic: true Period: +1h0m0s0ms
+  JOB #u0a211/91023: 55667788 com.example.spammer/.NetworkSyncJob
+    Service: ComponentInfo{com.example.spammer/.NetworkSyncJob}
+    Periodic: true Period: +30m0s0ms

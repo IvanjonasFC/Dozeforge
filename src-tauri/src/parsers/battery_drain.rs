@@ -1,0 +1,308 @@
+//! Per-app battery drain parser — extracts the `Estimated power use (mAh)`
+//! block from `dumpsys batterystats` and attributes drain to packages.
+//!
+//! Format (line-based, indented under "Estimated power use (mAh):"):
+//!
+//!   Estimated power use (mAh):
+//!     Capacity: 5000, Computed drain: 234.5, actual drain: 200-250
+//!     Screen: 45.6
+//!     Idle: 12.3
+//!     Cell standby: 8.9
+//!     Wifi: 3.2
+//!     Bluetooth: 0.5
+//!     Uid u0a123: 23.4 ( cpu=12.3 wake=2.1 wifi=8.9 ... )
+//!     Uid u0a87: 18.7 ( cpu=10.0 wake=5.0 sensor=3.7 )
+//!     Uid 1000: 45.0 ( cpu=45.0 )
+//!
+//! The trailing parenthesised breakdown is optional and varies by API level.
+//! We capture only the per-UID total and the subsystem breakdown.
+
+use std::collections::HashMap;
+
+use once_cell::sync::Lazy;
+use regex::Regex;
+use serde::{Deserialize, Serialize};
+
+use crate::error::Result;
+use crate::parsers::{PackageName, Parser};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppDrainEntry {
+    pub package: PackageName,
+    pub uid: i32,
+    pub drain_mah: f64,
+    /// Share of computed drain (0.0..=1.0). Useful for UI bars.
+    pub drain_share: f32,
+    /// Sub-component breakdown in mAh. Common keys: cpu, wake, wifi, sensor,
+    /// audio, video, gps, bluetooth, cell, screen. Empty if not present.
+    pub breakdown: HashMap<String, f64>,
+    /// True if this app holds a wakelock currently (joined with live wakelocks).
+    pub has_live_wakelock: bool,
+    /// True if a process for this app was in zombie state during sampling.
+    pub is_zombie: bool,
+    /// Plain-language verdict for the UI.
+    pub verdict: AppDrainVerdict,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AppDrainVerdict {
+    /// Negligible drain (< 0.5 mAh or < 0.2% share). Safe to ignore.
+    Negligible,
+    /// Drain explained by foreground use (CPU dominated by screen-on samples).
+    LegitimateForeground,
+    /// Drain explained by background media playback. Likely legitimate.
+    LegitimateMedia,
+    /// Background CPU drain. Worth restricting unless user uses the app often.
+    BackgroundHog,
+    /// Live wakelock + no recent foreground use. Almost certainly a leak.
+    Zombie,
+    /// Wakelock-only drain (sensor, GPS, wifi). High-impact targets.
+    RadioHog,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct BatteryDrain {
+    pub capacity_mah: Option<u32>,
+    pub computed_drain_mah: f64,
+    pub actual_drain_min_mah: Option<f64>,
+    pub actual_drain_max_mah: Option<f64>,
+    pub entries: Vec<AppDrainEntry>,
+}
+
+static SECTION_START: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?m)^\s*Estimated power use \(mAh\):").unwrap());
+
+static CAPACITY_LINE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r"(?m)^\s*Capacity:\s*(?P<cap>\d+),\s*Computed drain:\s*(?P<comp>[\d.]+)(?:,\s*actual drain:\s*(?P<min>[\d.]+)(?:-(?P<max>[\d.]+))?)?",
+    )
+    .unwrap()
+});
+
+// Examples we must match:
+//   Uid u0a123: 23.4 ( cpu=12.3 wake=2.1 )
+//   Uid u0a87: 18.7
+//   Uid 1000: 45.0 ( cpu=45.0 )
+static UID_LINE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r"(?m)^\s*Uid\s+(?P<raw>u?\d+a?\d*)\s*:\s*(?P<mah>[\d.]+)(?:\s*\((?P<break>[^)]*)\))?",
+    )
+    .unwrap()
+});
+
+static BREAKDOWN_TOKEN: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?P<key>[a-zA-Z_]+)\s*=\s*(?P<val>[\d.]+)").unwrap());
+
+pub struct BatteryDrainParser {
+    /// Map from UID to package name, sourced from another parser pass.
+    pub uid_to_pkg: HashMap<i32, PackageName>,
+    /// Set of packages with live wakelocks, for cross-flagging.
+    pub live_wakelock_pkgs: std::collections::HashSet<String>,
+    /// Set of packages with zombie processes, for cross-flagging.
+    pub zombie_pkgs: std::collections::HashSet<String>,
+}
+
+impl Parser for BatteryDrainParser {
+    type Output = BatteryDrain;
+
+    fn parse(&self, input: &str) -> Result<BatteryDrain> {
+        // Constrain to the section. If absent, return empty (not an error;
+        // some older API levels emit drain only with `--reset` first).
+        let Some(start) = SECTION_START.find(input) else {
+            return Ok(BatteryDrain::default());
+        };
+        let scope = &input[start.start()..];
+
+        let mut out = BatteryDrain::default();
+        if let Some(c) = CAPACITY_LINE.captures(scope) {
+            out.capacity_mah = c["cap"].parse().ok();
+            out.computed_drain_mah = c["comp"].parse().unwrap_or(0.0);
+            out.actual_drain_min_mah = c.name("min").and_then(|m| m.as_str().parse().ok());
+            out.actual_drain_max_mah = c.name("max").and_then(|m| m.as_str().parse().ok());
+        }
+
+        for caps in UID_LINE.captures_iter(scope) {
+            let raw = &caps["raw"];
+            let Some(uid) = parse_uid(raw) else { continue };
+            let drain_mah: f64 = caps["mah"].parse().unwrap_or(0.0);
+            if drain_mah < 0.5 {
+                continue;
+            }
+            let mut breakdown: HashMap<String, f64> = HashMap::new();
+            if let Some(b) = caps.name("break") {
+                for tok in BREAKDOWN_TOKEN.captures_iter(b.as_str()) {
+                    let key = tok["key"].to_ascii_lowercase();
+                    let val: f64 = tok["val"].parse().unwrap_or(0.0);
+                    breakdown.insert(key, val);
+                }
+            }
+
+            let package = self.uid_to_pkg.get(&uid).cloned().unwrap_or_else(|| {
+                PackageName(if uid < 10_000 {
+                    format!("system:uid={uid}")
+                } else {
+                    format!("uid={uid}")
+                })
+            });
+
+            let pkg_str = package.0.clone();
+            let has_live_wakelock = self.live_wakelock_pkgs.contains(&pkg_str);
+            let is_zombie = self.zombie_pkgs.contains(&pkg_str);
+
+            let drain_share = if out.computed_drain_mah > 0.0 {
+                (drain_mah / out.computed_drain_mah) as f32
+            } else {
+                0.0
+            };
+
+            let verdict = classify(drain_mah, drain_share, &breakdown, has_live_wakelock, is_zombie);
+
+            out.entries.push(AppDrainEntry {
+                package,
+                uid,
+                drain_mah,
+                drain_share,
+                breakdown,
+                has_live_wakelock,
+                is_zombie,
+                verdict,
+            });
+        }
+
+        out.entries.sort_by(|a, b| b.drain_mah.partial_cmp(&a.drain_mah).unwrap_or(std::cmp::Ordering::Equal));
+        Ok(out)
+    }
+}
+
+/// Parse Android UID notation. Examples: `u0a123` -> 10123, `1000` -> 1000.
+/// `u<user>a<offset>` resolves to `user * 100_000 + 10_000 + offset` per AOSP.
+fn parse_uid(s: &str) -> Option<i32> {
+    if let Some(rest) = s.strip_prefix('u') {
+        let (user_s, off_s) = rest.split_once('a')?;
+        let user: i32 = user_s.parse().ok()?;
+        let off: i32 = off_s.parse().ok()?;
+        Some(user * 100_000 + 10_000 + off)
+    } else {
+        s.parse().ok()
+    }
+}
+
+fn classify(
+    drain_mah: f64,
+    drain_share: f32,
+    breakdown: &HashMap<String, f64>,
+    has_live_wakelock: bool,
+    is_zombie: bool,
+) -> AppDrainVerdict {
+    if drain_mah < 0.5 || drain_share < 0.002 {
+        return AppDrainVerdict::Negligible;
+    }
+    if is_zombie || (has_live_wakelock && drain_share > 0.05) {
+        return AppDrainVerdict::Zombie;
+    }
+    // Audio / video subsystems hot => likely media playback.
+    let audio = breakdown.get("audio").copied().unwrap_or(0.0);
+    let video = breakdown.get("video").copied().unwrap_or(0.0);
+    if (audio + video) > 0.3 * drain_mah {
+        return AppDrainVerdict::LegitimateMedia;
+    }
+    // Sensor / GPS / wifi-active dominate => radio hog.
+    let radio = breakdown.get("sensor").copied().unwrap_or(0.0)
+        + breakdown.get("gps").copied().unwrap_or(0.0)
+        + breakdown.get("wifi").copied().unwrap_or(0.0)
+        + breakdown.get("cell").copied().unwrap_or(0.0);
+    if radio >= 0.4 * drain_mah && drain_share > 0.03 {
+        return AppDrainVerdict::RadioHog;
+    }
+    // Screen-attributable CPU is hard to derive without screen-on-time; we
+    // treat large drain with wake>cpu as legitimate foreground proxy.
+    let cpu = breakdown.get("cpu").copied().unwrap_or(0.0);
+    let wake = breakdown.get("wake").copied().unwrap_or(0.0);
+    if wake > 0.0 && wake > cpu && drain_share < 0.05 {
+        return AppDrainVerdict::LegitimateForeground;
+    }
+    if drain_share > 0.03 {
+        AppDrainVerdict::BackgroundHog
+    } else {
+        AppDrainVerdict::LegitimateForeground
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SAMPLE: &str = "
+  Estimated power use (mAh):
+    Capacity: 5000, Computed drain: 234.5, actual drain: 200-250
+    Screen: 45.6
+    Idle: 12.3
+    Cell standby: 8.9
+    Uid u0a123: 60.0 ( cpu=20.0 wake=5.0 wifi=30.0 cell=5.0 )
+    Uid u0a87: 25.0 ( cpu=10.0 wake=5.0 sensor=10.0 )
+    Uid u0a44: 18.0 ( cpu=2.0 audio=15.0 )
+    Uid 1000: 5.0
+    Uid u0a999: 0.1
+";
+
+    fn parser() -> BatteryDrainParser {
+        let mut uid_to_pkg = HashMap::new();
+        uid_to_pkg.insert(10_123, PackageName("com.example.hog".into()));
+        uid_to_pkg.insert(10_087, PackageName("com.example.radiohog".into()));
+        uid_to_pkg.insert(10_044, PackageName("com.spotify.music".into()));
+        BatteryDrainParser {
+            uid_to_pkg,
+            live_wakelock_pkgs: Default::default(),
+            zombie_pkgs: Default::default(),
+        }
+    }
+
+    #[test]
+    fn parses_capacity_and_drain() {
+        let out = parser().parse(SAMPLE).unwrap();
+        assert_eq!(out.capacity_mah, Some(5000));
+        assert!((out.computed_drain_mah - 234.5).abs() < 0.001);
+        assert_eq!(out.actual_drain_min_mah, Some(200.0));
+        assert_eq!(out.actual_drain_max_mah, Some(250.0));
+    }
+
+    #[test]
+    fn drops_negligible_entries() {
+        let out = parser().parse(SAMPLE).unwrap();
+        // u0a999 has 0.1 mAh -> below threshold.
+        assert!(!out.entries.iter().any(|e| e.uid == 10_999));
+    }
+
+    #[test]
+    fn classifies_media_app() {
+        let out = parser().parse(SAMPLE).unwrap();
+        let spotify = out.entries.iter().find(|e| e.uid == 10_044).unwrap();
+        assert_eq!(spotify.verdict, AppDrainVerdict::LegitimateMedia);
+    }
+
+    #[test]
+    fn classifies_radio_hog() {
+        let out = parser().parse(SAMPLE).unwrap();
+        let radio = out.entries.iter().find(|e| e.uid == 10_087).unwrap();
+        assert_eq!(radio.verdict, AppDrainVerdict::RadioHog);
+    }
+
+    #[test]
+    fn parse_uid_handles_both_forms() {
+        assert_eq!(parse_uid("u0a123"), Some(10_123));
+        assert_eq!(parse_uid("u1a44"), Some(110_044));
+        assert_eq!(parse_uid("1000"), Some(1000));
+        assert_eq!(parse_uid("bogus"), None);
+    }
+
+    #[test]
+    fn live_wakelock_flag_propagates_to_verdict() {
+        let mut p = parser();
+        p.live_wakelock_pkgs.insert("com.example.hog".into());
+        let out = p.parse(SAMPLE).unwrap();
+        let hog = out.entries.iter().find(|e| e.uid == 10_123).unwrap();
+        assert!(hog.has_live_wakelock);
+        assert_eq!(hog.verdict, AppDrainVerdict::Zombie);
+    }
+}

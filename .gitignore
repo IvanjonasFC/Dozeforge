@@ -1,0 +1,41 @@
+# ---- Node / SvelteKit ----
+node_modules
+.svelte-kit
+build
+dist
+.DS_Store
+.env
+.env.*
+!.env.example
+.vite/
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# ---- TypeScript ----
+*.tsbuildinfo
+
+# ---- Rust / Tauri ----
+src-tauri/target/
+src-tauri/Cargo.lock
+src-tauri/WixTools/
+src-tauri/gen/
+**/*.rs.bk
+
+# ---- IDE ----
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json.template
+.idea/
+*.swp
+*.swo
+
+# ---- OS ----
+Thumbs.db
+desktop.ini
+
+# ---- DozeForge runtime ----
+snapshots/
+exports/
+logs/
+manifests/local-overrides.json

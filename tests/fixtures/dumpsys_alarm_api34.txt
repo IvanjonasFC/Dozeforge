@@ -1,0 +1,27 @@
+Current Alarm Manager state:
+  nowRTC=1731283200000 nowELAPSED=4823561 ALL_PERMS=true
+  Pending alarm batches: 3
+
+Batch{ee01c20 num=2 start=4824000 end=4824500 flgs=0x4}
+  RTC_WAKEUP #0: Alarm{a1b2c3 type 0 origWhen 4824000 namespace:tag:com.google.android.gms}
+    tag=*alarm*:com.google.android.gms/.gcm.nts.TaskExecutionService
+    operation=PendingIntent{ff0011: PendingIntentRecord{aa11bb com.example.spammer broadcastIntent}}
+    uid=10211 sourcePackage=com.example.spammer
+
+  RTC_WAKEUP #1: Alarm{d4e5f6 type 0 origWhen 4824300 namespace:tag:com.google.android.gms}
+    tag=*alarm*:com.google.android.gms/.gcm.nts.TaskExecutionService
+    operation=PendingIntent{ff0012: PendingIntentRecord{cc22dd com.example.spammer broadcastIntent}}
+    uid=10211 sourcePackage=com.example.spammer
+
+Batch{ff01d30 num=1 start=4825000 end=4825100 flgs=0x0}
+  ELAPSED_REALTIME_WAKEUP #0: Alarm{99aabb type 2 origWhen 4825000 namespace:tag:com.example.benign}
+    tag=*alarm*:com.example.benign/.SyncReceiver
+    operation=PendingIntent{ee0033: PendingIntentRecord{dd33ee com.example.benign broadcastIntent}}
+    uid=10333 sourcePackage=com.example.benign
+
+Statistics over last 24h for com.example.spammer:
+  287 wakeups, 3 alarms total
+Statistics over last 24h for com.google.android.gms:
+  412 wakeups, 19 alarms total
+Statistics over last 24h for com.example.benign:
+  24 wakeups, 1 alarms total

@@ -1,0 +1,16 @@
+9,0,i,vers,28,189,A111-pixel7-fingerprint,A111-pixel7-fingerprint
+9,0,i,uid,1000,android
+9,0,i,uid,1001,com.android.phone
+9,0,i,uid,10086,com.google.android.gms
+9,0,i,uid,10211,com.example.spammer
+9,0,i,uid,10333,com.example.benign
+9,10086,l,apk,1,com.google.android.gms,com.google.android.gms.gcm.GcmService,2451,3892
+9,10211,l,apk,1,com.example.spammer,com.example.spammer.PushService,7,8
+9,10333,l,apk,1,com.example.benign,com.example.benign.MainActivity,2,2
+9,10086,l,pwl,GcmService,0,0,1834200,287,0,0,0,0,0,0,0
+9,10086,l,pwl,LocationManagerService,0,0,621400,89,0,0,0,0,0,0,0
+9,10211,l,pwl,SyncService,0,0,5421800,612,0,0,0,0,0,0,0
+9,10211,l,pwl,PushReceiver,0,0,891200,143,0,0,0,0,0,0,0
+9,10333,l,pwl,*sync*/com.example.benign/Periodic,0,0,128400,21,0,0,0,0,0,0,0
+9,0,l,bt,4,17280000,17280000,15422000,1858000,98,87
+9,0,l,gn,4,86400000,0,0
