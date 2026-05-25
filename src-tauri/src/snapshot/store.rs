@@ -70,7 +70,17 @@ impl SnapshotStore {
         Ok(id)
     }
 
+    /// Validates that `id` is a 64-character lowercase hex string (SHA-256).
+    /// Prevents path traversal via crafted snapshot ids (e.g. `../../etc/passwd`).
+    fn check_id(id: &str) -> Result<()> {
+        if id.len() != 64 || !id.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(Error::SnapshotNotFound(id.to_string()));
+        }
+        Ok(())
+    }
+
     pub fn load(&self, id: &str) -> Result<StoredSnapshot> {
+        Self::check_id(id)?;
         let path = self.root.join(format!("{id}.json"));
         if !path.exists() {
             return Err(Error::SnapshotNotFound(id.to_string()));
