@@ -105,3 +105,13 @@ impl From<Error> for IpcError {
         }
     }
 }
+
+/// Allow internal functions that return `crate::error::Result<_>` to use `?`
+/// against validators that return `IpcError`. The conversion is lossy (we
+/// fold everything into `Error::Other`) which is fine because the original
+/// validation message is preserved verbatim.
+impl From<IpcError> for Error {
+    fn from(value: IpcError) -> Self {
+        Error::Other(value.message)
+    }
+}

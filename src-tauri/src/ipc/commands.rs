@@ -77,8 +77,11 @@ pub struct WakeupSources {
     pub sensors: Vec<SensorClient>,
 }
 
-fn deserialise_serial(raw: &str) -> DeviceSerial {
-    DeviceSerial(raw.to_string())
+/// Validates a raw frontend-supplied serial and returns a `DeviceSerial`.
+/// Use this in every Tauri command that accepts a `serial: String`.
+fn checked_serial(raw: &str) -> std::result::Result<DeviceSerial, IpcError> {
+    crate::security::validate_serial(raw)?;
+    Ok(DeviceSerial(raw.to_string()))
 }
 
 #[tauri::command]
@@ -96,7 +99,7 @@ pub async fn probe_capabilities(
     state: State<'_, Arc<AppState>>,
     serial: String,
 ) -> std::result::Result<DeviceCapabilities, IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
     CapabilityProbe::probe(&state.adb, &serial).await.map_err(Into::into)
 }
 
@@ -108,7 +111,7 @@ pub async fn audit_device(
     inner_audit(state.inner().clone(), serial).await.map_err(Into::into)
 }
 async fn inner_audit(state: Arc<AppState>, serial: String) -> Result<AuditReport> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
     let identity = state.adb.build_identity(&serial).await?;
     let api = identity.sdk_int;
 
@@ -142,7 +145,7 @@ pub async fn check_root(
     state: State<'_, Arc<AppState>>,
     serial: String,
 ) -> std::result::Result<bool, IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
     // Execute `su -c id`. If it contains 'uid=0(root)', root access is granted.
     let output = state.adb.invoker.shell(&serial, "su -c id", Duration::from_secs(5)).await;
     match output {
@@ -157,7 +160,7 @@ pub async fn sample_cpu(
     serial: String,
     duration_secs: Option<u32>,
 ) -> std::result::Result<Vec<CpuAggregate>, IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
     let interval = Duration::from_secs(2);
     let total_samples = duration_secs.map(|d| (d.max(2) / 2).max(1)).unwrap_or(15);
     let sampler = CpuSampler {
@@ -173,7 +176,7 @@ pub async fn get_live_ram(
     state: State<'_, Arc<AppState>>,
     serial: String,
 ) -> std::result::Result<crate::parsers::meminfo::MemInfo, IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
     let raw = state.adb.invoker.shell(&serial, "dumpsys meminfo", Duration::from_secs(10)).await?;
     crate::parsers::meminfo::MemInfoParser::parse(&raw).map_err(IpcError::from)
 }
@@ -183,7 +186,7 @@ pub async fn get_io_stats(
     state: State<'_, Arc<AppState>>,
     serial: String,
 ) -> std::result::Result<Vec<crate::parsers::io_stats::UidIoStat>, IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
     // Requires root mode, but let's just attempt it with su -c
     let raw = state.adb.invoker.shell(&serial, "su -c cat /proc/uid_io/stats", Duration::from_secs(10)).await?;
     crate::parsers::io_stats::IoStatsParser::parse(&raw).map_err(IpcError::from)
@@ -197,7 +200,7 @@ pub async fn list_wakeup_sources(
     inner_wakeup_sources(state.inner().clone(), serial).await.map_err(Into::into)
 }
 async fn inner_wakeup_sources(state: Arc<AppState>, serial: String) -> Result<WakeupSources> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
 
     let alarm_raw = state.adb.invoker
         .shell(&serial, "dumpsys alarm", Duration::from_secs(30)).await?;
@@ -233,7 +236,7 @@ pub async fn list_packages(
     state: State<'_, Arc<AppState>>,
     serial: String,
 ) -> std::result::Result<Vec<InstalledPackage>, IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
     let raw = safe_pm_list_packages(&state.adb.invoker, &serial).await?;
     PackageListParser.parse(&raw).map_err(Into::into)
 }
@@ -251,7 +254,7 @@ async fn inner_classify(
     serial: String,
     packages: Vec<String>,
 ) -> Result<Vec<PackageVerdict>> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
     let raw = safe_pm_list_packages(&state.adb.invoker, &serial).await?;
     let installed = PackageListParser.parse(&raw)?;
 
@@ -284,7 +287,7 @@ async fn inner_apply(
     serial: String,
     actions: Vec<OptimizationAction>,
 ) -> Result<OptimizationReport> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
     let capabilities = CapabilityProbe::probe(&state.adb, &serial).await?;
     let raw = safe_pm_list_packages(&state.adb.invoker, &serial).await?;
     let installed = PackageListParser.parse(&raw)?;
@@ -338,7 +341,7 @@ async fn inner_take_snapshot(
     use crate::parsers::AppOpsParser;
     use crate::snapshot::store::StoredSnapshot;
 
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
     let identity = state.adb.build_identity(&serial).await?;
 
     let mut appops: Vec<(PackageName, Vec<crate::parsers::AppOpState>)> = Vec::new();
@@ -391,7 +394,7 @@ pub async fn rollback_snapshot(
     snapshot_id: String,
     only: Option<Vec<String>>,
 ) -> std::result::Result<RollbackReport, IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
     let snapshot = state.snapshot_store.load(&snapshot_id).map_err(IpcError::from)?;
     let only_pkgs: Option<Vec<PackageName>> = only.map(|v| v.into_iter().map(PackageName).collect());
     let rb = Rollback { client: &state.adb, serial: &serial };
@@ -436,7 +439,7 @@ async fn inner_bloatware(
     packages: Vec<String>,
     disable: bool,
 ) -> Result<BloatwareReport> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
     let raw = safe_pm_list_packages(&state.adb.invoker, &serial).await?;
     let installed = PackageListParser.parse(&raw)?;
     let manifest = state.manifest.read().await;
@@ -461,7 +464,7 @@ pub async fn set_phantom_process_limit(
     serial: String,
     value: u32,
 ) -> std::result::Result<(), IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
     if value > 1024 {
         return Err(IpcError::from(crate::error::Error::other(format!(
             "phantom process limit {value} is unreasonable; max is 1024"
@@ -491,7 +494,7 @@ async fn inner_preview_profile(
     profile: Profile,
     user_excludes: Vec<String>,
 ) -> Result<ProfilePreview> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
     let capabilities = CapabilityProbe::probe(&state.adb, &serial).await?;
 
     let raw = safe_pm_list_packages(&state.adb.invoker, &serial).await?;
@@ -573,7 +576,7 @@ pub async fn overview_snapshot(
 }
 
 async fn inner_overview(state: Arc<AppState>, serial: String) -> Result<OverviewSnapshot> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
     let identity = state.adb.build_identity(&serial).await?;
 
     // 1. Battery (sysfs first, dumpsys fallback)
@@ -702,7 +705,7 @@ pub async fn battery_health(
     state: State<'_, Arc<AppState>>,
     serial: String,
 ) -> std::result::Result<BatteryHealth, IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
     Ok(read_battery_health(&state.adb, &serial).await)
 }
 
@@ -711,7 +714,7 @@ pub async fn process_status(
     state: State<'_, Arc<AppState>>,
     serial: String,
 ) -> std::result::Result<ProcessSnapshot, IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
     let raw = state.adb.invoker
         .shell(&serial, ProcessStatusParser::command(), Duration::from_secs(10))
         .await.map_err(IpcError::from)?;
@@ -725,7 +728,7 @@ pub async fn start_telemetry_stream(
     serial: String,
     interval_secs: Option<u64>,
 ) -> std::result::Result<(), IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
     streams::start(
         state.stream_state.clone(),
         state.adb.clone(),
@@ -749,7 +752,7 @@ pub async fn miscategorized_apps(
     state: State<'_, Arc<AppState>>,
     serial: String,
 ) -> std::result::Result<Vec<MiscategorizedApp>, IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
 
     let usage_raw = state.adb.invoker
         .shell(&serial, UsageStatsParser::command(), Duration::from_secs(15))
@@ -770,7 +773,7 @@ pub async fn sleep_score(
     state: State<'_, Arc<AppState>>,
     serial: String,
 ) -> std::result::Result<SleepScore, IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
     let identity = state.adb.build_identity(&serial).await?;
     let api = identity.sdk_int;
 
@@ -845,7 +848,7 @@ pub async fn get_dangerous_permissions(
     state: State<'_, Arc<AppState>>,
     serial: String,
 ) -> std::result::Result<Vec<DangerousPermissionEntry>, IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
     let appops_raw = state
         .adb
         .invoker
@@ -869,7 +872,7 @@ pub async fn get_privacy_state(
     state: State<'_, Arc<AppState>>,
     serial: String,
 ) -> std::result::Result<PrivacyState, IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
 
     // 1. Private DNS state â€” two `settings get` calls in parallel.
     let mode_fut = state.adb.invoker.shell(
@@ -979,7 +982,7 @@ pub async fn storage_overview(
     state: State<'_, Arc<AppState>>,
     serial: String,
 ) -> std::result::Result<StorageOverviewDto, IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
 
     // diskstats can be slow on large /data partitions (does a benchmark)
     let raw = state.adb.invoker
@@ -1029,7 +1032,7 @@ pub async fn storage_inventory(
     state: State<'_, Arc<AppState>>,
     serial: String,
 ) -> std::result::Result<Vec<PackageSize>, IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
     
     // Fetch both in parallel: pm list packages -f, and du -sk
     let pm_fut = state.adb.invoker.shell(&serial, "pm list packages -f 2>/dev/null", Duration::from_secs(10));
@@ -1085,7 +1088,7 @@ pub async fn get_display_settings(
     state: State<'_, Arc<AppState>>,
     serial: String,
 ) -> std::result::Result<DisplaySettings, IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
 
     // 7 parallel shell reads - none of these block on the device.
     let min_fut     = state.adb.invoker.shell(&serial, "settings get system min_refresh_rate",  Duration::from_secs(5));
@@ -1164,7 +1167,7 @@ pub async fn get_system_tweaks(
     state: State<'_, Arc<AppState>>,
     serial: String,
 ) -> std::result::Result<SystemTweaks, IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
     let phantom_fut = state.adb.invoker.shell(
         &serial, "settings get global settings_enable_monitor_phantom_procs", Duration::from_secs(5),
     );
@@ -1276,7 +1279,7 @@ pub async fn sleep_timeline(
     serial: String,
 ) -> std::result::Result<crate::parsers::sleep_timeline::SleepTimeline, IpcError> {
     use crate::parsers::sleep_timeline::SleepTimelineParser;
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
     let raw = state
         .adb
         .invoker
@@ -1292,7 +1295,7 @@ pub async fn kernel_wakelocks(
     serial: String,
 ) -> std::result::Result<Vec<crate::parsers::kernel_wakelocks::KernelWakelock>, IpcError> {
     use crate::parsers::kernel_wakelocks::KernelWakelocksParser;
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
 
     // Primary: parse the "Wakeup reasons" / "Kernel Wakelocks" section of
     // dumpsys batterystats. Works on API 30-34+, all OEMs.
@@ -1329,7 +1332,7 @@ pub async fn battery_per_app(
     use crate::parsers::battery_drain::BatteryDrainParser;
     use crate::parsers::batterystats::build_uid_to_package_map;
 
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
 
     // Parallel fetch: checkin (for UID map) + textual (for drain section).
     let checkin_fut = state.adb.invoker.shell(
@@ -1403,7 +1406,7 @@ pub async fn resolve_app_labels(
     state: State<'_, Arc<AppState>>,
     serial: String,
 ) -> std::result::Result<std::collections::HashMap<String, String>, IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
     let raw = state
         .adb
         .invoker
@@ -1471,7 +1474,7 @@ pub async fn bloatware_recommendations(
     state: State<'_, Arc<AppState>>,
     serial: String,
 ) -> std::result::Result<Vec<BloatwareRecommendation>, IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
     let raw = safe_pm_list_packages(&state.adb.invoker, &serial)
         .await
         .map_err(IpcError::from)?;
@@ -1514,7 +1517,7 @@ pub async fn preview_bloat_preset(
     serial: String,
     preset: BloatPreset,
 ) -> std::result::Result<Vec<String>, IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
     let raw = safe_pm_list_packages(&state.adb.invoker, &serial)
         .await
         .map_err(IpcError::from)?;
@@ -1539,7 +1542,7 @@ pub async fn get_performance_settings(
     state: State<'_, Arc<AppState>>,
     serial: String,
 ) -> std::result::Result<PerformanceSettings, IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
     // Execute all reads concurrently for speed
     let (s_anim, s_trans, s_dur, s_bg, s_wifi, s_ble, s_doze, s_net) = tokio::join!(
         state.adb.invoker.shell(&serial, "settings get global window_animation_scale", Duration::from_secs(3)),
@@ -1644,7 +1647,7 @@ pub async fn get_doze_state(
     state: State<'_, Arc<AppState>>,
     serial: String,
 ) -> std::result::Result<DozeState, IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
     let raw = state.adb.invoker
         .shell(&serial, "dumpsys deviceidle", Duration::from_secs(10))
         .await
@@ -1659,7 +1662,8 @@ pub async fn set_doze_whitelist(
     package: String,
     add: bool,
 ) -> std::result::Result<(), IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
+    crate::security::validate_pkg(&package)?;
     let op = if add { "+" } else { "-" };
     state.adb.invoker
         .shell(&serial, &format!("dumpsys deviceidle whitelist {}{}", op, package), Duration::from_secs(5))
@@ -1674,7 +1678,7 @@ pub async fn set_force_doze(
     serial: String,
     force: bool,
 ) -> std::result::Result<(), IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
     let cmd = if force { "dumpsys deviceidle force-idle" } else { "dumpsys deviceidle unforce" };
     state.adb.invoker.shell(&serial, cmd, Duration::from_secs(5)).await.map_err(IpcError::from)?;
     Ok(())
@@ -1686,7 +1690,7 @@ pub async fn simulate_unplug(
     serial: String,
     unplug: bool,
 ) -> std::result::Result<(), IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
     let cmd = if unplug { "dumpsys battery unplug" } else { "dumpsys battery reset" };
     state.adb.invoker.shell(&serial, cmd, Duration::from_secs(5)).await.map_err(IpcError::from)?;
     Ok(())
@@ -1698,7 +1702,10 @@ pub async fn get_art_status_batch(
     serial: String,
     packages: Vec<String>,
 ) -> std::result::Result<HashMap<String, String>, IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
+    for pkg in &packages {
+        crate::security::validate_pkg(pkg)?;
+    }
     let mut tasks = Vec::new();
 
     for pkg in packages {
@@ -1734,7 +1741,7 @@ pub async fn clear_temp_files(
     state: State<'_, Arc<AppState>>,
     serial: String,
 ) -> std::result::Result<(), IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
     state.adb.invoker.shell(&serial, "rm -rf /data/local/tmp/*", Duration::from_secs(10)).await.map_err(IpcError::from)?;
     Ok(())
 }
@@ -1744,7 +1751,7 @@ pub async fn get_all_standby_buckets(
     state: State<'_, Arc<AppState>>,
     serial: String,
 ) -> std::result::Result<Vec<crate::parsers::StandbyAssignment>, IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
     let output = state.adb.invoker.shell(&serial, "dumpsys usagestats", Duration::from_secs(10)).await.map_err(IpcError::from)?;
     let parsed = crate::parsers::standby::StandbyParser.parse(&output).map_err(IpcError::from)?;
     Ok(parsed)
@@ -1757,7 +1764,9 @@ pub async fn set_standby_bucket(
     package: String,
     bucket: String,
 ) -> std::result::Result<(), IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
+    crate::security::validate_pkg(&package)?;
+    crate::security::validate_token(&bucket)?;
     state.adb.invoker.shell(&serial, &format!("am set-standby-bucket {} {}", package, bucket), Duration::from_secs(5)).await.map_err(IpcError::from)?;
     Ok(())
 }
@@ -1770,7 +1779,10 @@ pub async fn set_appops(
     op: String,
     mode: String,
 ) -> std::result::Result<(), IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
+    crate::security::validate_pkg(&package)?;
+    crate::security::validate_op_name(&op)?;
+    crate::security::validate_token(&mode)?;
     state.adb.invoker.shell(&serial, &format!("appops set {} {} {}", package, op, mode), Duration::from_secs(5)).await.map_err(IpcError::from)?;
     Ok(())
 }
@@ -1781,7 +1793,8 @@ pub async fn force_stop_package(
     serial: String,
     package: String,
 ) -> std::result::Result<(), IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
+    crate::security::validate_pkg(&package)?;
     state.adb.invoker.shell(&serial, &format!("am force-stop {}", package), Duration::from_secs(5)).await.map_err(IpcError::from)?;
     Ok(())
 }
@@ -1792,7 +1805,8 @@ pub async fn open_app_settings(
     serial: String,
     package: String,
 ) -> std::result::Result<(), IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
+    crate::security::validate_pkg(&package)?;
     state.adb.invoker.shell(&serial, &format!("am start -a android.settings.APPLICATION_DETAILS_SETTINGS -d package:{}", package), Duration::from_secs(5)).await.map_err(IpcError::from)?;
     Ok(())
 }
@@ -1811,7 +1825,12 @@ pub async fn get_app_restrictions_batch(
     serial: String,
     packages: Vec<String>,
 ) -> std::result::Result<HashMap<String, AppRestrictions>, IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
+    // Validate every package name once, up front; reject the whole batch on any failure
+    // rather than partially executing dangerous shell strings.
+    for pkg_raw in &packages {
+        crate::security::validate_pkg(pkg_raw)?;
+    }
     let mut tasks = tokio::task::JoinSet::new();
 
     for pkg_raw in packages {
@@ -1887,7 +1906,8 @@ pub async fn get_single_app_details(
     package: String,
     root_mode: bool,
 ) -> std::result::Result<SingleAppDetails, IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
+    crate::security::validate_pkg(&package)?;
     let pkg = crate::parsers::PackageName(package.clone());
     
     let mut restrictions = AppRestrictions {
@@ -2028,7 +2048,8 @@ pub async fn clear_app_data(
     serial: String,
     package: String,
 ) -> std::result::Result<(), IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
+    crate::security::validate_pkg(&package)?;
     state.adb.invoker.shell(&serial, &format!("pm clear {}", package), Duration::from_secs(10)).await.map_err(IpcError::from)?;
     Ok(())
 }
@@ -2039,7 +2060,8 @@ pub async fn uninstall_package(
     serial: String,
     package: String,
 ) -> std::result::Result<(), IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
+    crate::security::validate_pkg(&package)?;
     state.adb.invoker.shell(&serial, &format!("pm uninstall {}", package), Duration::from_secs(15)).await.map_err(IpcError::from)?;
     Ok(())
 }
@@ -2053,7 +2075,7 @@ pub async fn compile_all_apps(
     state: State<'_, Arc<AppState>>,
     serial: String,
 ) -> std::result::Result<(), IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
     // This can take a while, so we increase the timeout to 5 minutes
     state.adb.invoker.shell(&serial, "pm compile -a -f -m speed", Duration::from_secs(300)).await.map_err(IpcError::from)?;
     Ok(())
@@ -2064,7 +2086,7 @@ pub async fn disable_ram_plus(
     state: State<'_, Arc<AppState>>,
     serial: String,
 ) -> std::result::Result<(), IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
     // Samsung specific
     state.adb.invoker.shell(&serial, "settings put global ram_expand_size 0", Duration::from_secs(5)).await.map_err(IpcError::from)?;
     // General ZRAM
@@ -2078,7 +2100,8 @@ pub async fn force_refresh_rate(
     serial: String,
     rate: String,
 ) -> std::result::Result<(), IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
+    crate::security::validate_dimension(&rate)?;
     state.adb.invoker.shell(&serial, &format!("settings put system min_refresh_rate {}", rate), Duration::from_secs(5)).await.map_err(IpcError::from)?;
     state.adb.invoker.shell(&serial, &format!("settings put system peak_refresh_rate {}", rate), Duration::from_secs(5)).await.map_err(IpcError::from)?;
     Ok(())
@@ -2090,10 +2113,11 @@ pub async fn set_wm_size(
     serial: String,
     size: String,
 ) -> std::result::Result<(), IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
     if size.trim().is_empty() || size.trim() == "reset" {
         state.adb.invoker.shell(&serial, "wm size reset", Duration::from_secs(5)).await.map_err(IpcError::from)?;
     } else {
+        crate::security::validate_dimension(&size)?;
         state.adb.invoker.shell(&serial, &format!("wm size {}", size), Duration::from_secs(5)).await.map_err(IpcError::from)?;
     }
     Ok(())
@@ -2105,10 +2129,11 @@ pub async fn set_wm_density(
     serial: String,
     density: String,
 ) -> std::result::Result<(), IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
     if density.trim().is_empty() || density.trim() == "reset" {
         state.adb.invoker.shell(&serial, "wm density reset", Duration::from_secs(5)).await.map_err(IpcError::from)?;
     } else {
+        crate::security::validate_dimension(&density)?;
         state.adb.invoker.shell(&serial, &format!("wm density {}", density), Duration::from_secs(5)).await.map_err(IpcError::from)?;
     }
     Ok(())
@@ -2119,7 +2144,7 @@ pub async fn reset_display(
     state: State<'_, Arc<AppState>>,
     serial: String,
 ) -> std::result::Result<(), IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
     state.adb.invoker.shell(&serial, "wm size reset", Duration::from_secs(5)).await.map_err(IpcError::from)?;
     state.adb.invoker.shell(&serial, "wm density reset", Duration::from_secs(5)).await.map_err(IpcError::from)?;
     Ok(())
@@ -2131,7 +2156,7 @@ pub async fn set_heads_up_notifications(
     serial: String,
     enabled: bool,
 ) -> std::result::Result<(), IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
     let val = if enabled { "1" } else { "0" };
     state.adb.invoker.shell(&serial, &format!("settings put global heads_up_notifications_enabled {}", val), Duration::from_secs(5)).await.map_err(IpcError::from)?;
     Ok(())
@@ -2143,7 +2168,7 @@ pub async fn set_hotword_detection(
     serial: String,
     enabled: bool,
 ) -> std::result::Result<(), IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
     let val = if enabled { "1" } else { "0" };
     state.adb.invoker.shell(&serial, &format!("settings put global hotword_detection_enabled {}", val), Duration::from_secs(5)).await.map_err(IpcError::from)?;
     Ok(())
@@ -2155,7 +2180,7 @@ pub async fn set_activity_logging(
     serial: String,
     enabled: bool,
 ) -> std::result::Result<(), IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
     let val = if enabled { "1" } else { "0" };
     state.adb.invoker.shell(&serial, &format!("settings put global activity_starts_logging_enabled {}", val), Duration::from_secs(5)).await.map_err(IpcError::from)?;
     Ok(())
@@ -2167,7 +2192,7 @@ pub async fn set_adaptive_connectivity(
     serial: String,
     enabled: bool,
 ) -> std::result::Result<(), IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
     let val = if enabled { "1" } else { "0" };
     state.adb.invoker.shell(&serial, &format!("settings put secure adaptive_connectivity_enabled {}", val), Duration::from_secs(5)).await.map_err(IpcError::from)?;
     Ok(())
@@ -2179,10 +2204,13 @@ pub async fn reboot_device(
     serial: String,
     mode: String,
 ) -> std::result::Result<(), IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
+    // Allow the frontend convention "system" to mean "no extra argument".
+    let mode_arg = if mode == "system" { "" } else { &mode };
+    crate::security::validate_reboot_mode(mode_arg)?;
     let mut args = vec!["-s", serial.as_str(), "reboot"];
-    if mode != "system" {
-        args.push(mode.as_str());
+    if !mode_arg.is_empty() {
+        args.push(mode_arg);
     }
     state.adb.invoker.exec(&args, Duration::from_secs(15)).await.map_err(IpcError::from)?;
     Ok(())
@@ -2194,7 +2222,8 @@ pub async fn set_display_density(
     serial: String,
     density: String,
 ) -> std::result::Result<(), IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
+    crate::security::validate_dimension(&density)?;
     state.adb.invoker.shell(&serial, &format!("wm density {}", density), Duration::from_secs(5)).await.map_err(IpcError::from)?;
     Ok(())
 }
@@ -2205,7 +2234,8 @@ pub async fn set_display_size(
     serial: String,
     size: String,
 ) -> std::result::Result<(), IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
+    crate::security::validate_dimension(&size)?;
     state.adb.invoker.shell(&serial, &format!("wm size {}", size), Duration::from_secs(5)).await.map_err(IpcError::from)?;
     Ok(())
 }
@@ -2218,7 +2248,7 @@ pub async fn set_window_blurs(
     serial: String,
     disabled: bool,
 ) -> std::result::Result<(), IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
     let val = if disabled { "1" } else { "0" };
     state.adb.invoker.shell(&serial, &format!("settings put global disable_window_blurs {}", val), Duration::from_secs(5)).await.map_err(IpcError::from)?;
     Ok(())
@@ -2230,7 +2260,7 @@ pub async fn set_reduce_transparency(
     serial: String,
     enabled: bool,
 ) -> std::result::Result<(), IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
     let val = if enabled { "1" } else { "0" };
     state.adb.invoker.shell(&serial, &format!("settings put global accessibility_reduce_transparency {}", val), Duration::from_secs(5)).await.map_err(IpcError::from)?;
     Ok(())
@@ -2242,7 +2272,7 @@ pub async fn set_fixed_performance_mode(
     serial: String,
     enabled: bool,
 ) -> std::result::Result<(), IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
     let val = if enabled { "true" } else { "false" };
     state.adb.invoker.shell(&serial, &format!("cmd power set-fixed-performance-mode-enabled {}", val), Duration::from_secs(5)).await.map_err(IpcError::from)?;
     Ok(())
@@ -2254,7 +2284,7 @@ pub async fn set_dark_mode(
     serial: String,
     enabled: bool,
 ) -> std::result::Result<(), IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
     let val = if enabled { "2" } else { "1" };
     state.adb.invoker.shell(&serial, &format!("settings put secure ui_night_mode {}", val), Duration::from_secs(5)).await.map_err(IpcError::from)?;
     Ok(())
@@ -2266,7 +2296,7 @@ pub async fn set_stay_awake(
     serial: String,
     enabled: bool,
 ) -> std::result::Result<(), IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
     let val = if enabled { "7" } else { "0" };
     state.adb.invoker.shell(&serial, &format!("settings put global stay_on_while_plugged_in {}", val), Duration::from_secs(5)).await.map_err(IpcError::from)?;
     Ok(())
@@ -2278,18 +2308,28 @@ pub async fn capture_screenshot(
     serial: String,
     save_path: String,
 ) -> std::result::Result<(), IpcError> {
-    let serial = deserialise_serial(&serial);
-    let temp_file = format!("/sdcard/screen_{}.png", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis());
-    
+    let serial = checked_serial(&serial)?;
+    // `save_path` is a HOST path written by ADB pull. Don't validate it as an Android path,
+    // but make sure it has no shell metacharacters since we pass it through `exec(&[..])`
+    // which uses argv directly (no shell). Length cap is a defensive measure.
+    if save_path.is_empty() || save_path.len() > 4096 {
+        return Err(IpcError { kind: "invalid_input".into(), message: "invalid save_path".into() });
+    }
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let temp_file = format!("/sdcard/screen_{}.png", nonce);
+
     // 1. Take screenshot
     state.adb.invoker.shell(&serial, &format!("screencap -p {}", temp_file), Duration::from_secs(10)).await.map_err(IpcError::from)?;
-    
-    // 2. Pull it
+
+    // 2. Pull it (argv-based, no shell)
     state.adb.invoker.exec(&["-s", serial.as_str(), "pull", &temp_file, &save_path], Duration::from_secs(15)).await.map_err(IpcError::from)?;
-    
-    // 3. Cleanup
+
+    // 3. Cleanup (temp_file is fully controlled by us; safe to interpolate)
     let _ = state.adb.invoker.shell(&serial, &format!("rm {}", temp_file), Duration::from_secs(5)).await;
-    
+
     Ok(())
 }
 
@@ -2301,12 +2341,16 @@ pub async fn install_apk(
     downgrade: bool,
     keep_data: bool,
 ) -> std::result::Result<String, IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
+    // `apk_path` is a HOST path passed via argv to adb. No shell, but length cap.
+    if apk_path.is_empty() || apk_path.len() > 4096 {
+        return Err(IpcError { kind: "invalid_input".into(), message: "invalid apk_path".into() });
+    }
     let mut args = vec!["-s", serial.as_str(), "install"];
     if downgrade { args.push("-d"); }
     if keep_data { args.push("-r"); }
     args.push(&apk_path);
-    
+
     let res = state.adb.invoker.exec(&args, Duration::from_secs(60)).await.map_err(IpcError::from)?;
     Ok(res)
 }
@@ -2315,7 +2359,7 @@ pub async fn install_apk(
 pub async fn launch_scrcpy(
     serial: String,
 ) -> std::result::Result<(), IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
     std::process::Command::new("scrcpy")
         .arg("-s")
         .arg(serial.as_str())
@@ -2336,7 +2380,7 @@ pub async fn extract_apk(
     package: String,
     save_path: String,
 ) -> std::result::Result<String, IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
     let out = state.adb.invoker.shell(&serial, &format!("pm path {}", package), std::time::Duration::from_secs(10)).await.map_err(IpcError::from)?;
     if out.trim().is_empty() { return Err(IpcError { kind: "extract_error".into(), message: "Package not found".into() }); }
 
@@ -2403,13 +2447,17 @@ pub async fn list_files(
     serial: String,
     path: String,
 ) -> std::result::Result<Vec<FileEntry>, IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
+    crate::security::validate_android_path(&path)?;
 
     // Resolve symlinks first (e.g. /sdcard -> /storage/self/primary)
     let resolved = {
         let r = state.adb.invoker.shell(&serial, &format!("readlink -f \"{}\" 2>/dev/null || echo \"{}\"", path, path), std::time::Duration::from_secs(5)).await.unwrap_or_else(|_| path.clone());
         r.trim().to_string()
     };
+    // `readlink -f` output is data from the device, not user input — but it gets re-interpolated
+    // below. Re-validate to be safe (the device could be compromised).
+    crate::security::validate_android_path(&resolved)?;
 
     // Use ls -la for full listing including hidden files; Android ls has slightly different format
     let out = state.adb.invoker.shell(
@@ -2474,7 +2522,11 @@ pub async fn push_file(
     local_path: String,
     remote_path: String,
 ) -> std::result::Result<(), IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
+    if local_path.is_empty() || local_path.len() > 4096 {
+        return Err(IpcError { kind: "invalid_input".into(), message: "invalid local_path".into() });
+    }
+    crate::security::validate_android_path(&remote_path)?;
     state.adb.invoker.exec(&["-s", serial.as_str(), "push", &local_path, &remote_path], std::time::Duration::from_secs(300)).await.map_err(IpcError::from)?;
     Ok(())
 }
@@ -2486,7 +2538,11 @@ pub async fn pull_file(
     remote_path: String,
     local_path: String,
 ) -> std::result::Result<(), IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
+    crate::security::validate_android_path(&remote_path)?;
+    if local_path.is_empty() || local_path.len() > 4096 {
+        return Err(IpcError { kind: "invalid_input".into(), message: "invalid local_path".into() });
+    }
     state.adb.invoker.exec(&["-s", serial.as_str(), "pull", &remote_path, &local_path], std::time::Duration::from_secs(300)).await.map_err(IpcError::from)?;
     Ok(())
 }
@@ -2496,9 +2552,11 @@ pub async fn delete_file(
     serial: String,
     path: String,
 ) -> std::result::Result<(), IpcError> {
-    let serial = deserialise_serial(&serial);
-    // Be careful with rm -rf! We wrap path in quotes.
-    state.adb.invoker.shell(&serial, &format!("rm -rf \"{}\"", path.replace("\"", "\\\"")), std::time::Duration::from_secs(30)).await.map_err(IpcError::from)?;
+    let serial = checked_serial(&serial)?;
+    crate::security::validate_android_path(&path)?;
+    // After validate_android_path the value has no shell metacharacters and no `..` segments,
+    // so it is safe to interpolate.
+    state.adb.invoker.shell(&serial, &format!("rm -rf \"{}\"", path), std::time::Duration::from_secs(30)).await.map_err(IpcError::from)?;
     Ok(())
 }
 
@@ -2508,8 +2566,9 @@ pub async fn create_directory(
     serial: String,
     path: String,
 ) -> std::result::Result<(), IpcError> {
-    let serial = deserialise_serial(&serial);
-    state.adb.invoker.shell(&serial, &format!("mkdir -p \"{}\"", path.replace("\"", "\\\"")), std::time::Duration::from_secs(10)).await.map_err(IpcError::from)?;
+    let serial = checked_serial(&serial)?;
+    crate::security::validate_android_path(&path)?;
+    state.adb.invoker.shell(&serial, &format!("mkdir -p \"{}\"", path), std::time::Duration::from_secs(10)).await.map_err(IpcError::from)?;
     Ok(())
 }
 
@@ -2517,7 +2576,7 @@ pub async fn create_directory(
 pub async fn fastboot_reboot(
     serial: String,
 ) -> std::result::Result<(), IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
     tokio::time::timeout(std::time::Duration::from_secs(30), tokio::process::Command::new("fastboot").arg("-s").arg(serial.as_str()).arg("reboot").output()).await.map_err(|e| IpcError { kind: "fastboot_error".into(), message: format!("Timeout: {}", e) })?.map_err(|e| IpcError { kind: "fastboot_error".into(), message: format!("Exec failed: {}", e) })?;
     Ok(())
 }
@@ -2533,7 +2592,7 @@ pub async fn get_thermal_status(
     state: State<'_, Arc<AppState>>,
     serial: String,
 ) -> std::result::Result<ThermalStatus, IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
     let out = state.adb.invoker.shell(&serial, "dumpsys thermalservice", Duration::from_secs(5)).await.unwrap_or_default();
     
     let mut val = -1;
@@ -2579,7 +2638,7 @@ pub async fn get_network_usage(
     state: State<'_, Arc<AppState>>,
     serial: String,
 ) -> std::result::Result<Vec<NetworkUsage>, IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
     
     // Get all packages with their UIDs
     let all_packages = list_packages(state.clone(), serial.as_str().to_string()).await?;
@@ -2632,7 +2691,11 @@ pub async fn fastboot_flash(
     partition: String,
     image_path: String,
 ) -> std::result::Result<(), IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
+    crate::security::validate_partition(&partition)?;
+    if image_path.is_empty() || image_path.len() > 4096 {
+        return Err(IpcError { kind: "invalid_input".into(), message: "invalid image_path".into() });
+    }
     tokio::time::timeout(std::time::Duration::from_secs(300), tokio::process::Command::new("fastboot").arg("-s").arg(serial.as_str()).arg("flash").arg(partition).arg(image_path).output()).await.map_err(|e| IpcError { kind: "fastboot_error".into(), message: format!("Timeout: {}", e) })?.map_err(|e| IpcError { kind: "fastboot_error".into(), message: format!("Exec failed: {}", e) })?;
     Ok(())
 }
@@ -2648,7 +2711,7 @@ pub async fn export_native_profile(
     state: State<'_, Arc<AppState>>,
     serial: String,
 ) -> std::result::Result<NativeProfile, IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
     let out = state.adb.invoker.shell(&serial, "pm list packages -d", std::time::Duration::from_secs(10)).await.map_err(IpcError::from)?;
     let mut disabled_packages = Vec::new();
     for line in out.lines() {
@@ -2667,8 +2730,11 @@ pub async fn import_native_profile(
     serial: String,
     profile: NativeProfile,
 ) -> std::result::Result<(), IpcError> {
-    let serial = deserialise_serial(&serial);
+    let serial = checked_serial(&serial)?;
     for pkg in profile.disabled_packages {
+        // Reject malformed packages instead of silently swallowing — the user expects an error
+        // if the imported profile is corrupt.
+        crate::security::validate_pkg(&pkg)?;
         let _ = state.adb.invoker.shell(&serial, &format!("pm disable-user --user 0 {}", pkg), std::time::Duration::from_secs(10)).await;
     }
     Ok(())
@@ -2704,6 +2770,11 @@ pub async fn adb_pair(
     address: String,
     pin: String,
 ) -> std::result::Result<String, IpcError> {
+    // `address` here is the host:port we will connect to (akin to a serial).
+    crate::security::validate_serial(&address)?;
+    if pin.is_empty() || pin.len() > 32 || !pin.chars().all(|c| c.is_ascii_digit()) {
+        return Err(IpcError { kind: "invalid_input".into(), message: "invalid pairing pin".into() });
+    }
     let out = state.adb.invoker.exec(&["pair", &address, &pin], std::time::Duration::from_secs(15)).await.map_err(IpcError::from)?;
     Ok(out)
 }
@@ -2713,6 +2784,7 @@ pub async fn adb_connect(
     state: State<'_, Arc<AppState>>,
     address: String,
 ) -> std::result::Result<String, IpcError> {
+    crate::security::validate_serial(&address)?;
     let out = state.adb.invoker.exec(&["connect", &address], std::time::Duration::from_secs(15)).await.map_err(IpcError::from)?;
     Ok(out)
 }
@@ -2722,6 +2794,7 @@ pub async fn adb_tcpip(
     state: State<'_, Arc<AppState>>,
     serial: String,
 ) -> std::result::Result<String, IpcError> {
+    crate::security::validate_serial(&serial)?;
     let out = state.adb.invoker.exec(&["-s", &serial, "tcpip", "5555"], std::time::Duration::from_secs(10)).await.map_err(IpcError::from)?;
     Ok(out)
 }
