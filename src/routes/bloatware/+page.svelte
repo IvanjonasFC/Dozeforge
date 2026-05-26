@@ -195,10 +195,10 @@
   function recBadgeMeta(r: Recommendation | 'disabled_only'): { cls: string; label: string; icon: string } {
     switch (r) {
       case 'safe_to_disable':      return { cls: 'rec-safe',     label: 'Safe to disable',     icon: '✓' };
-      case 'preinstalled_bloat':   return { cls: 'rec-bloat',    label: 'Preinstalled bloat',  icon: '◐' };
+      case 'preinstalled_bloat':   return { cls: 'rec-bloat',    label: 'Preinstalled bloat',  icon: '·' };
       case 'system_use_with_care': return { cls: 'rec-careful',  label: 'Use with care',       icon: '!' };
       case 'do_not_touch':         return { cls: 'rec-critical', label: 'Do not touch',        icon: '✕' };
-      case 'disabled_only':        return { cls: '',             label: 'Disabled apps',       icon: '⏸' };
+      case 'disabled_only':        return { cls: '',             label: 'Disabled apps',       icon: '·' };
     }
   }
 </script>

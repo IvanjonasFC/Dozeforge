@@ -170,7 +170,13 @@
           <tbody>
             {#each files as f}
               <tr class="file-row" class:clickable={f.is_dir} onclick={() => navigate(f)}>
-                <td class="icon">{f.is_dir ? '📁' : '📄'}</td>
+                <td class="icon">
+                  {#if f.is_dir}
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                  {:else}
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--fg-2)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                  {/if}
+                </td>
                 <td class="name">{f.name}</td>
                 <td class="mono small muted">
                   {#if f.is_dir}

@@ -23,7 +23,7 @@
     { id: 'privacy:clipboard', label: 'Open Clipboard guard', hint: 'deny READ_CLIPBOARD',   action: () => onNavigate('/privacy/?tab=clipboard') },
     { id: 'storage:inventory', label: 'Storage inventory', hint: 'apps by code size',        action: () => onNavigate('/storage/?tab=inventory') },
     { id: 'storage:trim',      label: 'Trim system caches', hint: 'free up disk space',      action: () => onNavigate('/storage/?tab=optimize') },
-    { id: 'storage:dexopt',    label: 'Run ART dexopt', hint: '⚠ destructive',               action: () => onNavigate('/storage/?tab=optimize') },
+    { id: 'storage:dexopt',    label: 'Run ART dexopt', hint: 'destructive',                action: () => onNavigate('/storage/?tab=optimize') },
     { id: 'profile:conservative', label: 'Apply Conservative profile', hint: 'safest',       action: () => onNavigate('/actions/?profile=conservative') },
     { id: 'profile:balanced',     label: 'Apply Balanced profile',     hint: 'recommended',  action: () => onNavigate('/actions/?profile=balanced') },
     { id: 'profile:aggressive',   label: 'Apply Aggressive profile',   hint: 'all user apps',action: () => onNavigate('/actions/?profile=aggressive') },

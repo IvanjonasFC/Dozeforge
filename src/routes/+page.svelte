@@ -237,7 +237,9 @@
   <h3 class="section-title">Recommended actions</h3>
   <div class="action-grid">
     <button class="action-card" onclick={() => goto('/sleep/')}>
-      <div class="action-icon" style="color: var(--bad); background: color-mix(in srgb, var(--bad) 15%, transparent); box-shadow: 0 0 15px color-mix(in srgb, var(--bad) 20%, transparent);">☾</div>
+      <div class="action-icon" style="color: var(--bad); background: color-mix(in srgb, var(--bad) 15%, transparent);">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+      </div>
       <div class="action-body">
         <div class="action-title">
           {#if miscat.length === 0}
@@ -259,7 +261,9 @@
     </button>
 
     <button class="action-card" onclick={() => goto('/privacy/')}>
-      <div class="action-icon" style="color: var(--warn); background: color-mix(in srgb, var(--warn) 15%, transparent); box-shadow: 0 0 15px color-mix(in srgb, var(--warn) 20%, transparent);">◊</div>
+      <div class="action-icon" style="color: var(--warn); background: color-mix(in srgb, var(--warn) 15%, transparent);">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+      </div>
       <div class="action-body">
         <div class="action-title">
           {#if privacy?.dns.mode === 'hostname'}
@@ -282,7 +286,9 @@
     </button>
 
     <button class="action-card" onclick={() => goto('/storage/')}>
-      <div class="action-icon" style="color: var(--accent); background: color-mix(in srgb, var(--accent) 15%, transparent); box-shadow: 0 0 15px color-mix(in srgb, var(--accent) 20%, transparent);">◰</div>
+      <div class="action-icon" style="color: var(--accent); background: color-mix(in srgb, var(--accent) 15%, transparent);">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="12" x2="2" y2="12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/><line x1="6" y1="16" x2="6.01" y2="16"/><line x1="10" y1="16" x2="10.01" y2="16"/></svg>
+      </div>
       <div class="action-body">
         <div class="action-title">
           {#if cacheBytes > 1_000_000_000}
@@ -440,11 +446,12 @@
     box-shadow: 0 6px 16px rgba(0,0,0,0.3);
   }
   .action-icon {
-    font-size: 28px; line-height: 1; flex-shrink: 0;
+    flex-shrink: 0;
     width: 44px; height: 44px;
     display: flex; align-items: center; justify-content: center;
-    border-radius: 50%; /* Circle icon looks friendlier */
+    border-radius: 10px;
   }
+  .action-icon svg { display: block; }
   .action-body { flex: 1; min-width: 0; overflow: hidden; }
   .action-title {
     font-size: var(--font-size-base); font-weight: 600;

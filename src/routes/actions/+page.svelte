@@ -20,10 +20,10 @@
 
   // ===== Profiles =====
   const profiles: Array<{ id: Profile; title: string; subtitle: string; tier: string; icon: string }> = [
-    { id: 'conservative', title: 'Conservative', subtitle: 'Only known offenders.',     tier: 'moderate', icon: '🛡️' },
-    { id: 'balanced',     title: 'Balanced',     subtitle: 'Recommended default.',      tier: 'ok',       icon: '⚖️' },
-    { id: 'aggressive',   title: 'Aggressive',   subtitle: 'Restrict every user app.',  tier: 'elevated', icon: '⚡' },
-    { id: 'nuclear',      title: 'Nuclear',      subtitle: 'Maximum savings.',          tier: 'critical', icon: '☢️' }
+    { id: 'conservative', title: 'Conservative', subtitle: 'Only known offenders.',     tier: 'moderate', icon: 'shield' },
+    { id: 'balanced',     title: 'Balanced',     subtitle: 'Recommended default.',      tier: 'ok',       icon: 'scale' },
+    { id: 'aggressive',   title: 'Aggressive',   subtitle: 'Restrict every user app.',  tier: 'elevated', icon: 'zap' },
+    { id: 'nuclear',      title: 'Nuclear',      subtitle: 'Maximum savings.',          tier: 'critical', icon: 'alert' }
   ];
 
   let selectedProfile = $state<Profile | null>(null);
@@ -164,7 +164,17 @@
         <button class="profile-card" data-tier={p.tier} onclick={() => loadPreview(p.id)}>
           <div class="profile-tier" data-tier={p.tier}></div>
           <div class="profile-content">
-            <div class="profile-icon">{p.icon}</div>
+            <div class="profile-icon" data-tier={p.tier}>
+              {#if p.icon === 'shield'}
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+              {:else if p.icon === 'scale'}
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 16l3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1z"/><path d="M2 16l3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1z"/><path d="M7 21h10"/><path d="M12 3v18"/><path d="M3 7h2c2 0 5-1 7-2 2 1 5 2 7 2h2"/></svg>
+              {:else if p.icon === 'zap'}
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+              {:else if p.icon === 'alert'}
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+              {/if}
+            </div>
             <div>
               <h3>{p.title}</h3>
               <p>{p.subtitle}</p>
@@ -394,7 +404,17 @@
   .profile-card[data-tier="critical"]:hover { box-shadow: 0 8px 24px color-mix(in srgb, var(--bad) 20%, transparent); border-color: color-mix(in srgb, var(--bad) 50%, transparent); }
 
   .profile-content { display: flex; gap: 1rem; align-items: center; }
-  .profile-icon { font-size: 28px; line-height: 1; filter: grayscale(0.2); }
+  .profile-icon {
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+    width: 44px; height: 44px;
+    border-radius: 10px;
+    color: var(--fg-2);
+  }
+  .profile-icon[data-tier="moderate"] { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  .profile-icon[data-tier="ok"]       { color: var(--good);   background: color-mix(in srgb, var(--good)   12%, transparent); }
+  .profile-icon[data-tier="elevated"] { color: var(--warn);   background: color-mix(in srgb, var(--warn)   12%, transparent); }
+  .profile-icon[data-tier="critical"] { color: var(--bad);    background: color-mix(in srgb, var(--bad)    12%, transparent); }
   .profile-tier {
     position: absolute;
     top: 0; left: 0;

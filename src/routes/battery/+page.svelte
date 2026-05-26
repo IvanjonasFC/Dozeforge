@@ -710,8 +710,9 @@
           {audioBusy ? '…' : (btAbsVolDisabled ? 'Re-enable' : 'Disable')}
         </button>
       </div>
-      <p class="muted footnote">
-        ⚠ This setting only takes effect after re-pairing the Bluetooth device.
+      <p class="muted footnote inline-warn">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--warn)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        This setting only takes effect after re-pairing the Bluetooth device.
         Unpair the headset, toggle airplane mode, then pair again.
       </p>
 
@@ -775,7 +776,10 @@
           <button class:active={display.avrcp_version === 'avrcp15'} onclick={() => setAvrcp('avrcp15')} disabled={audioBusy}>1.5</button>
           <button class:active={display.avrcp_version === 'avrcp16'} onclick={() => setAvrcp('avrcp16')} disabled={audioBusy}>1.6</button>
         </div>
-        <p class="muted footnote">⚠ Requires re-pairing the Bluetooth device to take effect.</p>
+        <p class="muted footnote inline-warn">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--warn)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          Requires re-pairing the Bluetooth device to take effect.
+        </p>
       </div>
     {/if}
     <h2 style="margin-top: 2.5rem; margin-bottom: 0.75rem;">System Performance</h2>
@@ -901,6 +905,8 @@
   .preset-row button { font-size: var(--font-size-xs); padding: 0.35rem 0.75rem; }
   .audio-card { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: 1.25rem; }
   .footnote { font-size: var(--font-size-xs); margin: 0.85rem 0 0; }
+  .inline-warn { display: flex; align-items: flex-start; gap: 0.4rem; }
+  .inline-warn svg { flex-shrink: 0; margin-top: 1px; }
 
   /* ---------- By-app drain ---------- */
   .drain-kpi {
