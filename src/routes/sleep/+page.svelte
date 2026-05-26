@@ -3,6 +3,7 @@
   import { goto } from '$app/navigation';
   import { api, DozeForgeError } from '$tauri/api';
   import { deviceStore } from '$stores/device.svelte';
+  import { appModalStore } from '$stores/appModal.svelte';
   import Skeleton from '$components/Skeleton.svelte';
   import AppName from '$components/AppName.svelte';
   import { labelStore } from '$stores/labels.svelte';
@@ -82,7 +83,10 @@
   });
 
   function gotoActions(pkg: string) {
-    goto(`/actions/?pkg=${encodeURIComponent(pkg)}`);
+    // Open the in-place app modal instead of navigating away from the page;
+    // the modal already picks up the "battery" context from the URL (`/sleep`)
+    // and surfaces the relevant wakelock / standby / background controls.
+    appModalStore.open(pkg, 'battery');
   }
 
   async function toggleDoze() {

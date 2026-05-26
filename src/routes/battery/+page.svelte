@@ -7,6 +7,7 @@
   import Skeleton from '$components/Skeleton.svelte';
   import AppName from '$components/AppName.svelte';
   import { labelStore } from '$stores/labels.svelte';
+  import { appModalStore } from '$stores/appModal.svelte';
   import type { BatteryHealth, BatteryDrain, AppDrainEntry, AvrcpVersion, DisplaySettings, PerformanceSettings } from '$types';
 
   type Tab = 'health' | 'display' | 'performance';
@@ -536,7 +537,7 @@
               <tbody>
                 {#each drainEntries as e (e.uid)}
                   {@const b = verdictBadge(e.verdict)}
-                  <tr class:row-bad={e.verdict === 'zombie' || e.verdict === 'background_hog'} class="app-row" onclick={() => goto(`/actions/?pkg=${encodeURIComponent(e.package)}`)} style="cursor: pointer;" title="Click to optimize this app">
+                  <tr class:row-bad={e.verdict === 'zombie' || e.verdict === 'background_hog'} class="app-row" onclick={() => appModalStore.open(e.package, 'battery')} style="cursor: pointer;" title="Click to optimize this app">
                     <td>
                       <AppName package={e.package} size="sm" hidePackage inline />
                       {#if appRestrictions[e.package]}

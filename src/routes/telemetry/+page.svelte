@@ -4,6 +4,7 @@
   import { api, DozeForgeError } from '$tauri/api';
   import { deviceStore } from '$stores/device.svelte';
   import { labelStore } from '$stores/labels.svelte';
+  import { appModalStore } from '$stores/appModal.svelte';
   import AppName from '$components/AppName.svelte';
   import Skeleton from '$components/Skeleton.svelte';
   import SlideOver from '$components/SlideOver.svelte';
@@ -105,7 +106,9 @@
   async function restrict(pkg: string | null) {
     if (!pkg) return;
     selected = null;
-    goto(`/actions/?pkg=${encodeURIComponent(pkg)}`);
+    // Open the inline app-details modal (general context — caller may be
+    // inspecting any kind of process from telemetry).
+    appModalStore.open(pkg, 'general');
   }
 
   let actionBusy = $state(false);
