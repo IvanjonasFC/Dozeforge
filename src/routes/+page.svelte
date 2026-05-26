@@ -112,11 +112,26 @@
     return 'Significant background load and disk pressure detected.';
   });
 
-  // Score ring math (circumference of r=70 circle = 440)
-  const RING_CIRC = 440;
+  // Score ring math (circumference of r=80 circle = 502)
+  const RING_CIRC = 502;
   const ringOffset = $derived.by(() => {
     if (healthScore === null) return RING_CIRC;
     return RING_CIRC - (healthScore / 100) * RING_CIRC;
+  });
+
+  // Inner ring (battery level): circumference of r=60 circle = 377
+  const INNER_CIRC = 377;
+  const innerOffset = $derived.by(() => {
+    const lvl = snap?.battery.level_percent;
+    if (lvl === null || lvl === undefined) return INNER_CIRC;
+    return INNER_CIRC - (Math.min(100, Math.max(0, lvl)) / 100) * INNER_CIRC;
+  });
+  const innerRingColor = $derived.by(() => {
+    const lvl = snap?.battery.level_percent;
+    if (lvl === null || lvl === undefined) return 'var(--fg-3)';
+    if (lvl >= 60) return 'var(--good)';
+    if (lvl >= 25) return 'var(--warn)';
+    return 'var(--bad)';
   });
 
   // ----- Action cards (3) -----
@@ -179,15 +194,20 @@
   <!-- ===== HERO: Health Score ===== -->
   <section class="hero-card" data-band={scoreBand}>
     <div class="hero-ring">
-      <svg viewBox="0 0 200 200" width="180" height="180">
-        <circle cx="100" cy="100" r="70" stroke="var(--bg-3)" stroke-width="14" fill="none"/>
-        <circle cx="100" cy="100" r="70" stroke={ringColorVar} stroke-width="14" stroke-linecap="round"
+      <svg viewBox="0 0 200 200" class="big-ring">
+        <!-- Outer track + arc (health score) -->
+        <circle cx="100" cy="100" r="80" stroke="var(--bg-4)" stroke-width="10" fill="none"/>
+        <circle cx="100" cy="100" r="80" stroke={ringColorVar} stroke-width="10" stroke-linecap="round"
                 fill="none" transform="rotate(-90 100 100)"
-                stroke-dasharray={RING_CIRC} stroke-dashoffset={ringOffset} class="ring-arc"
-                style="filter: drop-shadow(0 0 8px {ringColorVar});"/>
+                stroke-dasharray={RING_CIRC} stroke-dashoffset={ringOffset} class="ring-arc"/>
+        <!-- Inner track + arc (battery level) -->
+        <circle cx="100" cy="100" r="60" stroke="var(--bg-4)" stroke-width="6" fill="none"/>
+        <circle cx="100" cy="100" r="60" stroke={innerRingColor} stroke-width="6" stroke-linecap="round"
+                fill="none" transform="rotate(-90 100 100)"
+                stroke-dasharray={INNER_CIRC} stroke-dashoffset={innerOffset} class="ring-arc"/>
         {#if healthScore !== null}
-          <text x="100" y="98" text-anchor="middle" class="ring-num">{healthScore}</text>
-          <text x="100" y="125" text-anchor="middle" class="ring-unit">/ 100</text>
+          <text x="100" y="94" text-anchor="middle" class="ring-num">{healthScore}</text>
+          <text x="100" y="116" text-anchor="middle" class="ring-unit">/ 100</text>
         {:else}
           <text x="100" y="108" text-anchor="middle" class="ring-num ring-muted">?</text>
         {/if}
@@ -371,9 +391,10 @@
   .hero-card[data-band="neutral"] { color: var(--fg-3); }
 
   .hero-ring { display: flex; align-items: center; justify-content: center; }
+  .big-ring { width: 220px; height: 220px; flex-shrink: 0; }
   .ring-arc { transition: stroke-dashoffset 1s cubic-bezier(0.16, 1, 0.3, 1); }
   .ring-num {
-    font-size: 48px; font-weight: 700; fill: var(--fg-0);
+    font-size: 44px; font-weight: 700; fill: var(--fg-0);
     font-family: var(--font-mono); letter-spacing: -0.04em;
   }
   .ring-num.ring-muted { fill: var(--fg-3); }
@@ -398,7 +419,7 @@
 
   /* === Action cards === */
   .action-grid {
-    display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.85rem;
+    display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.85rem;
     margin-bottom: 1.5rem;
   }
   @media (max-width: 920px) { .action-grid { grid-template-columns: 1fr; } }
@@ -408,7 +429,7 @@
     background: var(--bg-1); border: 1px solid var(--border);
     border-radius: var(--radius-lg); text-align: left;
     cursor: pointer; transition: all var(--t-fast);
-    width: 100%;
+    width: 100%; min-width: 0;
     color: inherit; font-family: inherit;
     box-shadow: 0 4px 12px rgba(0,0,0,0.2);
   }
@@ -424,10 +445,11 @@
     display: flex; align-items: center; justify-content: center;
     border-radius: 50%; /* Circle icon looks friendlier */
   }
-  .action-body { flex: 1; min-width: 0; }
+  .action-body { flex: 1; min-width: 0; overflow: hidden; }
   .action-title {
     font-size: var(--font-size-base); font-weight: 600;
     color: var(--fg-0); line-height: 1.3; margin-bottom: 0.35rem;
+    overflow-wrap: anywhere;
   }
   .action-title .counter {
     font-family: var(--font-mono); color: var(--accent); font-weight: 700;
@@ -435,6 +457,7 @@
   .action-desc {
     font-size: var(--font-size-xs); color: var(--fg-2);
     margin: 0 0 0.65rem 0; line-height: 1.5;
+    overflow-wrap: anywhere;
   }
   .action-cta {
     font-size: 11px; color: var(--accent); font-weight: 600;
@@ -444,7 +467,7 @@
 
   /* === Right-now grid (existing) === */
   .grid.three-col {
-    display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.85rem;
+    display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.85rem;
   }
   @media (max-width: 600px) { .grid.three-col { grid-template-columns: 1fr; } }
   .card-eyebrow {
