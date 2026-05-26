@@ -2062,7 +2062,35 @@ pub async fn uninstall_package(
 ) -> std::result::Result<(), IpcError> {
     let serial = checked_serial(&serial)?;
     crate::security::validate_pkg(&package)?;
-    state.adb.invoker.shell(&serial, &format!("pm uninstall {}", package), Duration::from_secs(15)).await.map_err(IpcError::from)?;
+
+    // Refuse to uninstall system-critical packages. The Executor performs the same check
+    // for OptimizationAction::DisablePackage; we replicate the gate here so that the raw
+    // IPC entry point cannot bypass the system-uid safety net (uid < 10000 → refused).
+    let raw = safe_pm_list_packages(&state.adb.invoker, &serial).await.map_err(IpcError::from)?;
+    let installed = PackageListParser.parse(&raw).map_err(IpcError::from)?;
+    let pkg_name = PackageName(package.clone());
+    let entry = installed
+        .iter()
+        .find(|p| p.name == pkg_name)
+        .ok_or_else(|| IpcError {
+            kind: "package_not_installed".into(),
+            message: format!("package {} is not installed", package),
+        })?;
+    let manifest = state.manifest.read().await;
+    let verdict = classify(entry, &manifest);
+    if verdict.tier == crate::heuristics::risk::RiskTier::Critical {
+        return Err(IpcError {
+            kind: "system_package_refused".into(),
+            message: format!("refusing to uninstall system-critical package {}", package),
+        });
+    }
+    // `pm uninstall --user 0` keeps the install record (allows re-enable) while removing
+    // the app for the current user, mirroring `pm disable-user --user 0` semantics used
+    // elsewhere in the codebase.
+    state.adb.invoker
+        .shell(&serial, &format!("pm uninstall --user 0 {}", package), Duration::from_secs(15))
+        .await
+        .map_err(IpcError::from)?;
     Ok(())
 }
 
