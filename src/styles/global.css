@@ -1,36 +1,40 @@
-/* DozeForge — Design Tokens v2
+/* DozeForge — Design Tokens v3
  *
- * Theme: OLED minimal-futurist. Grays + true black.
- * Typography: Geist Sans for UI, JetBrains Mono for system data.
+ * Theme: near-black OLED with an orange forge accent (matches ivanjonasfc.dev).
+ * Typography: Space Grotesk for display/headings, Inter for UI, JetBrains Mono for data.
  * Accent semantics: red=zombies/hogs, amber=proxies, emerald=healthy.
  */
 
+@import '@fontsource-variable/space-grotesk';
+@import '@fontsource-variable/inter';
 @import '@fontsource-variable/geist';
 @import '@fontsource-variable/jetbrains-mono';
 
 :root {
-  /* === Backgrounds === */
-  --bg-0: #09090B;     /* page (OLED black) */
-  --bg-1: #131316;     /* sidebar / topbar */
-  --bg-2: #18181B;     /* cards, inputs */
-  --bg-3: #1F1F23;     /* hover, raised */
-  --bg-4: #27272A;     /* pressed, badges */
+  /* === Backgrounds (near-black, warm) === */
+  --bg-0: #050505;     /* page (portfolio black) */
+  --bg-1: #0D0D10;     /* sidebar / topbar */
+  --bg-2: #121216;     /* cards, inputs */
+  --bg-3: #1A1A1F;     /* hover, raised */
+  --bg-4: #232329;     /* pressed, badges */
 
   /* === Borders === */
-  --border: #27272A;
-  --border-strong: #3F3F46;
-  --border-accent: #52525B;
+  --border: #212127;
+  --border-strong: #33333B;
+  --border-accent: #4A4A54;
 
   /* === Foreground === */
-  --fg-0: #FAFAFA;     /* primary text */
+  --fg-0: #FFFFFF;     /* primary text */
   --fg-1: #D4D4D8;     /* secondary */
-  --fg-2: #A1A1AA;     /* tertiary, muted */
+  --fg-2: #A0A0A0;     /* tertiary, muted (portfolio text-secondary) */
   --fg-3: #71717A;     /* placeholder, disabled */
 
-  /* === Accents === */
-  --accent: #38BDF8;          /* primary CTA, links */
-  --accent-dim: #0EA5E9;
-  --accent-soft: rgba(56, 189, 248, 0.12);
+  /* === Accents (orange forge) === */
+  --accent: #FF6B00;          /* primary CTA, links */
+  --accent-dim: #FF3C00;      /* hover / gradient end */
+  --accent-soft: rgba(255, 107, 0, 0.12);
+  --accent-gradient: linear-gradient(135deg, #FF6B00 0%, #FF3C00 100%);
+  --accent-glow: rgba(255, 107, 0, 0.5);
 
   /* === Semantic === */
   --good: #10B981;            /* healthy, safe */
@@ -43,10 +47,14 @@
   /* === Risk tiers === */
   --risk-critical: #EF4444;
   --risk-elevated: #F59E0B;
-  --risk-moderate: #38BDF8;
+  --risk-moderate: #94A3B8;   /* slate — low concern, kept distinct from brand orange */
+
+  /* === Dark text on bright fills (buttons, badges) === */
+  --on-accent: #0A0A0B;
 
   /* === Typography === */
-  --font-sans: 'Geist Variable', 'Inter', system-ui, -apple-system, sans-serif;
+  --font-display: 'Space Grotesk Variable', 'Space Grotesk', system-ui, sans-serif;
+  --font-sans: 'Inter Variable', 'Inter', 'Geist Variable', system-ui, -apple-system, sans-serif;
   --font-mono: 'JetBrains Mono Variable', 'Cascadia Code', 'Consolas', monospace;
   --font-size-base: 15.5px;
   --font-size-sm: 13px;
@@ -71,6 +79,59 @@
   --t-fast: 120ms cubic-bezier(0.16, 1, 0.3, 1);
   --t-base: 200ms cubic-bezier(0.16, 1, 0.3, 1);
   --t-slow: 360ms cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* === Shell chrome (sidebar / topbar) — theme-aware, tuned in one place === */
+  --grid-line: rgba(255, 255, 255, 0.028);
+  --glow-1: rgba(255, 107, 0, 0.10);
+  --glow-2: rgba(255, 107, 0, 0.05);
+  --glass: linear-gradient(180deg, rgba(12, 12, 15, 0.34) 0%, rgba(7, 7, 10, 0.20) 100%);
+  --glass-blur: none;
+  --hairline: rgba(255, 255, 255, 0.05);
+  --chrome-hover: rgba(255, 255, 255, 0.045);
+  --card-hover-border: rgba(255, 107, 0, 0.28);
+  /* Translucent panel surface (portfolio feel): lets the ambient glow bleed
+     through subtly instead of a flat opaque box, while staying readable. */
+  --card-bg: linear-gradient(180deg, rgba(28, 28, 34, 0.55) 0%, rgba(18, 18, 22, 0.42) 100%);
+  --card-bg-hover: linear-gradient(180deg, rgba(34, 34, 41, 0.62) 0%, rgba(22, 22, 27, 0.5) 100%);
+  /* Controls (inputs, selects, segmented tabs, topbar chips) — translucent so
+     they sit consistently over the glass/cards instead of dark opaque boxes. */
+  --control-bg: rgba(255, 255, 255, 0.045);
+  --control-bg-hover: rgba(255, 255, 255, 0.08);
+}
+
+/* === Light theme (first pass — refine live) === */
+[data-theme="light"] {
+  --bg-0: #FAFAF9;
+  --bg-1: #FFFFFF;
+  --bg-2: #F4F4F2;
+  --bg-3: #ECECEA;
+  --bg-4: #E2E2DF;
+  --border: #E4E4E1;
+  --border-strong: #CFCFCB;
+  --border-accent: #B8B8B2;
+  --fg-0: #1A1A1D;
+  --fg-1: #3F3F46;
+  --fg-2: #6B6B72;
+  --fg-3: #9A9AA0;
+  --accent: #E05500;
+  --accent-dim: #C74800;
+  --accent-soft: rgba(224, 85, 0, 0.10);
+  --accent-glow: rgba(224, 85, 0, 0.30);
+  --on-accent: #FFFFFF;
+  --grid-line: rgba(0, 0, 0, 0.075);
+  --glow-1: rgba(255, 107, 0, 0.08);
+  --glow-2: rgba(255, 107, 0, 0.04);
+  --glass: linear-gradient(180deg, rgba(255, 255, 255, 0.78) 0%, rgba(250, 250, 249, 0.55) 100%);
+  --hairline: rgba(0, 0, 0, 0.08);
+  --chrome-hover: rgba(0, 0, 0, 0.045);
+  --card-hover-border: rgba(224, 85, 0, 0.35);
+  --card-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.82) 0%, rgba(255, 255, 255, 0.66) 100%);
+  --card-bg-hover: linear-gradient(180deg, rgba(255, 255, 255, 0.92) 0%, rgba(255, 255, 255, 0.78) 100%);
+  --control-bg: rgba(0, 0, 0, 0.035);
+  --control-bg-hover: rgba(0, 0, 0, 0.06);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.06);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.12);
 }
 
 * {
@@ -95,12 +156,38 @@ html, body {
 
 /* === Typography === */
 h1, h2, h3, h4 {
+  font-family: var(--font-display);
   font-weight: 600;
   letter-spacing: -0.015em;
   margin: 0;
   color: var(--fg-0);
 }
-h1 { font-size: var(--font-size-2xl); margin-bottom: 0.5rem; }
+
+/* Brand text gradient (orange), matches portfolio .text-gradient */
+.text-gradient {
+  background: var(--accent-gradient);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+h1 {
+  font-size: var(--font-size-2xl);
+  margin-bottom: 0.5rem;
+  position: relative;
+  padding-left: 0.95rem;
+}
+/* Signature portfolio accent: orange gradient bar with glow left of page titles. */
+h1::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0.16em;
+  bottom: 0.16em;
+  width: 4px;
+  border-radius: 99px;
+  background: var(--accent-gradient);
+  box-shadow: 0 0 16px var(--accent-glow);
+}
 h2 { font-size: var(--font-size-xl); margin-bottom: 0.5rem; }
 h3 { font-size: var(--font-size-lg); }
 h4 { font-size: var(--font-size-base); font-weight: 500; color: var(--fg-1); }
@@ -152,14 +239,16 @@ button:active:not(:disabled) { transform: translateY(1px); }
 button:disabled { opacity: 0.4; cursor: not-allowed; }
 
 button.primary {
-  background: var(--accent);
-  color: #00131C;
-  border-color: var(--accent);
+  background: var(--accent-gradient);
+  color: #fff;
+  border-color: transparent;
   font-weight: 600;
+  box-shadow: 0 4px 16px -6px var(--accent-glow);
 }
 button.primary:hover:not(:disabled) {
-  background: #7DD3FC;
-  border-color: #7DD3FC;
+  background: linear-gradient(135deg, #FF7D1A 0%, #FF4D14 100%);
+  border-color: transparent;
+  box-shadow: 0 6px 20px -6px var(--accent-glow);
 }
 
 button.danger {
@@ -185,7 +274,7 @@ input, select, textarea {
   font-family: inherit;
   font-size: var(--font-size-sm);
   color: var(--fg-0);
-  background: var(--bg-2);
+  background: var(--control-bg);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 0.55rem 0.85rem;
@@ -201,14 +290,15 @@ input::placeholder { color: var(--fg-3); }
 
 /* === Cards === */
 .card {
-  background: var(--bg-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  padding: 1.25rem 1.5rem;
-  transition: border-color var(--t-base);
+  background: var(--card-bg);
+  border: 1px solid var(--hairline);
+  border-radius: 16px;
+  padding: 1.4rem 1.5rem;
+  box-shadow: var(--shadow-sm);
+  transition: border-color var(--t-base), background var(--t-base);
 }
-.card:hover { border-color: var(--border-strong); }
-.card.flat { background: transparent; }
+.card:hover { background: var(--card-bg-hover); }
+.card.flat { background: transparent; box-shadow: none; }
 .card.empty {
   display: flex;
   align-items: center;
@@ -269,7 +359,7 @@ tbody tr.selected { background: var(--accent-soft); }
 }
 .badge.critical { background: var(--bad-soft); color: var(--bad); border-color: rgba(239, 68, 68, 0.3); }
 .badge.elevated { background: var(--warn-soft); color: var(--warn); border-color: rgba(245, 158, 11, 0.3); }
-.badge.moderate { background: var(--accent-soft); color: var(--accent); border-color: rgba(56, 189, 248, 0.3); }
+.badge.moderate { background: rgba(148, 163, 184, 0.12); color: var(--risk-moderate); border-color: rgba(148, 163, 184, 0.3); }
 .badge.ok       { background: var(--good-soft); color: var(--good); border-color: rgba(16, 185, 129, 0.3); }
 
 /* === Error / warning surfaces === */
@@ -323,10 +413,12 @@ tbody tr.selected { background: var(--accent-soft); }
 .heatmap-cell > * { position: relative; z-index: 1; }
 
 /* === Scrollbar (subtle) === */
-::-webkit-scrollbar { width: 8px; height: 8px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--bg-4); border-radius: 4px; }
-::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
+/* Hidden scrollbars everywhere — scroll still works, just no visible bar */
+* {
+  scrollbar-width: none;        /* Firefox */
+  -ms-overflow-style: none;     /* legacy Edge/IE */
+}
+::-webkit-scrollbar { width: 0; height: 0; display: none; }  /* Chromium/WebView2 */
 
 /* === Focus visible (accessibility) === */
 *:focus-visible {

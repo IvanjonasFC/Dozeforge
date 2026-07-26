@@ -23,6 +23,7 @@ pub struct AppState {
     pub stream_state: StreamState,
     pub log_stream: LogStreamState,
     pub ram_stream: RamStreamState,
+    pub telemetry_history: Arc<tokio::sync::Mutex<crate::ipc::streams::TelemetryHistory>>,
     pub data_dir: PathBuf,
 }
 
@@ -46,6 +47,7 @@ impl AppState {
         let stream_state = streams::new_state();
         let log_stream = new_log_stream_state();
         let ram_stream = new_ram_stream_state();
+        let telemetry_history = Arc::new(tokio::sync::Mutex::new(crate::ipc::streams::TelemetryHistory::default()));
 
         Ok(Self {
             adb,
@@ -55,6 +57,7 @@ impl AppState {
             stream_state,
             log_stream,
             ram_stream,
+            telemetry_history,
             data_dir,
         })
     }

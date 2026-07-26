@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api } from '$lib/tauri/api';
   import { deviceStore } from '$stores/device.svelte';
+  import { i18n } from '$stores/i18n.svelte';
 
   let { address = '', open = $bindable(false) } = $props<{ address: string; open: boolean }>();
 
@@ -29,10 +30,11 @@
 
 {#if open}
   <div class="modal-backdrop" onclick={() => open = false} role="presentation">
-    <div class="modal" onclick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
-      <h3>Pair Device</h3>
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <div class="modal" onclick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" tabindex="-1">
+      <h3>{i18n.t('Pair Device')}</h3>
       <p class="muted small">
-        Enter the 6-digit Wi-Fi pairing code from your Android device for <strong>{address}</strong>.
+        {i18n.t('Enter the 6-digit Wi-Fi pairing code from your Android device for')} <strong>{address}</strong>.
       </p>
 
       {#if error}
@@ -52,9 +54,9 @@
       </div>
 
       <div class="modal-actions">
-        <button onclick={() => open = false} disabled={loading}>Cancel</button>
+        <button onclick={() => open = false} disabled={loading}>{i18n.t('Cancel')}</button>
         <button class="primary" onclick={handlePair} disabled={loading || pin.length < 6}>
-          {loading ? 'Pairing...' : 'Pair'}
+          {loading ? i18n.t('Pairing...') : i18n.t('Pair')}
         </button>
       </div>
     </div>

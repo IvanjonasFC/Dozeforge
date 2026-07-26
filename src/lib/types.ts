@@ -136,7 +136,8 @@ export type OptimizationAction =
   | { kind: 'enable_package'; package: string }
   | { kind: 'remove_doze_whitelist'; package: string }
   | { kind: 'add_doze_whitelist'; package: string }
-  | { kind: 'set_phantom_process_limit'; value: number };
+  | { kind: 'set_phantom_process_limit'; value: number }
+  | { kind: 'raw_shell'; command: string };
 
 export interface OptimizationOutcome {
   action: OptimizationAction;
@@ -251,6 +252,7 @@ export interface ProcessRow {
   args: string;
   package: string | null;
   is_hog_candidate: boolean;
+  is_smart_hog: boolean;
   is_zombie: boolean;
 }
 
@@ -260,12 +262,19 @@ export interface ProcessSnapshot {
   hog_candidate_count: number;
   total_cpu_percent: number;
   total_rss_kb: number;
+  cpu_user: number;
+  cpu_sys: number;
+  cpu_iowait: number;
+  mem_available_mb: number;
+  swap_free_mb: number;
+  swap_total_mb: number;
 }
 
 export interface TelemetryTick {
   device_serial: string;
   snapshot: ProcessSnapshot;
   ts_ms: number;
+  cpu_history: number[];
 }
 
 export interface MiscategorizedApp {
@@ -469,6 +478,8 @@ export interface BloatwareRecommendation {
   recommendation: Recommendation;
   notes: string;
   category: BloatCategory | null;
+  /** Corroborated by the UAD-NG community database (human-reviewed). */
+  community_verified?: boolean;
 }
 
 export type BloatPreset =

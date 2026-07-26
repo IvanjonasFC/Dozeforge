@@ -12,8 +12,9 @@ DozeForge runs as a single Tauri 2 process with two logical halves:
   the typed `api` wrapper in `src/lib/tauri/api.ts`. No network I/O -- even
   manifest updates flow through the native side.
 
-There is no second backend, no sidecar binary, no IPC bus beyond the Tauri
-command channel.
+There is no second backend, no IPC bus beyond the Tauri command channel. The one
+external binary is **scrcpy** (screen mirroring), invoked as a child process by
+the native side and bundled as a Tauri resource; it is never on the IPC path.
 
 ## 2. ADB layer
 
@@ -135,9 +136,11 @@ are ever logged -- only command lines and aggregate counters.
 
 ## 10. Frontend contract
 
-The frontend talks to the backend through exactly the 15 functions defined
-in `src/lib/tauri/api.ts`. Each one maps 1:1 to a Tauri command. New
-capabilities require:
+The frontend talks to the backend through the typed `api` object in
+`src/lib/tauri/api.ts`. Each method maps 1:1 to a Tauri command; the surface has
+grown well beyond the original handful and now spans auditing, optimization,
+storage, network, system tweaks, telemetry streaming, and diagnostics. Adding a
+capability requires:
 
 1. A new Rust function in `src-tauri/src/ipc/commands.rs`
 2. Registration in `src-tauri/src/lib.rs::run()`
@@ -146,3 +149,11 @@ capabilities require:
 
 The contract is enforced by review, not by codegen. The types are small
 enough that the duplication cost is lower than the codegen cost.
+
+## 11. Screen mirroring (scrcpy)
+
+Screen mirroring shells out to scrcpy. `resolve_scrcpy()` in
+`src-tauri/src/ipc/commands.rs` prefers the bundled copy (a Tauri resource under
+`src-tauri/scrcpy/`), then a `scrcpy/` folder next to the executable, then the
+system `PATH`, then common install locations. The binaries are fetched by
+`scripts/setup-scrcpy.mjs` and are not versioned in git.

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { deviceStore } from '$stores/device.svelte';
+  import { i18n } from '$stores/i18n.svelte';
 
   const missing = $derived.by(() => {
     const caps = deviceStore.capabilities;
@@ -23,10 +24,10 @@
 
 {#if missing.length > 0}
   <div class="warn">
-    <strong>Limited ROM capabilities detected.</strong>
-    The following primitives are unavailable on this device:
+    <strong>{i18n.t('Limited ROM capabilities detected.')}</strong>
+    {i18n.t('The following primitives are unavailable on this device:')}
     <span class="mono">{missing.join(', ')}</span>.
-    Affected optimisations will be disabled in the UI.
+    {i18n.t('Affected optimisations will be disabled in the UI.')}
   </div>
 {/if}
 

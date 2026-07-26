@@ -80,13 +80,16 @@ static CAPACITY_LINE: Lazy<Regex> = Lazy::new(|| {
     .unwrap()
 });
 
-// Examples we must match:
-//   Uid u0a123: 23.4 ( cpu=12.3 wake=2.1 )
-//   Uid u0a87: 18.7
-//   Uid 1000: 45.0 ( cpu=45.0 )
+// Examples we must match, across Android versions:
+//   Old:  Uid u0a123: 23.4 ( cpu=12.3 wake=2.1 )
+//   Old:  Uid 1000: 45.0 ( cpu=45.0 )
+//   New (A14/15):  UID u0a379: 153 fg: 101 (…) bg: 22.4 (…) cached: 0.363 (…)
+//                    screen=29.0 cpu=70.2 cpu:fg=64.8 cpu:bg=5.08 …   ← breakdown line
+// `inline` captures the old parenthesised breakdown; `cont` captures the new
+// continuation-line breakdown (key=val tokens) on the following indented line.
 static UID_LINE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(
-        r"(?m)^\s*Uid\s+(?P<raw>u?\d+a?\d*)\s*:\s*(?P<mah>[\d.]+)(?:\s*\((?P<break>[^)]*)\))?",
+        r"(?m)^\s*[Uu][Ii][Dd]\s+(?P<raw>u?\d+a?\d*)\s*:\s*(?P<mah>[\d.]+)(?:\s*\((?P<inline>[^)]*)\))?[^\n]*(?:\n[ \t]+(?P<cont>[a-z][^\n]*))?",
     )
     .unwrap()
 });
@@ -130,12 +133,15 @@ impl Parser for BatteryDrainParser {
                 continue;
             }
             let mut breakdown: HashMap<String, f64> = HashMap::new();
-            if let Some(b) = caps.name("break") {
-                for tok in BREAKDOWN_TOKEN.captures_iter(b.as_str()) {
-                    let key = tok["key"].to_ascii_lowercase();
-                    let val: f64 = tok["val"].parse().unwrap_or(0.0);
-                    breakdown.insert(key, val);
-                }
+            let bd_src = caps
+                .name("inline")
+                .or_else(|| caps.name("cont"))
+                .map(|m| m.as_str())
+                .unwrap_or("");
+            for tok in BREAKDOWN_TOKEN.captures_iter(bd_src) {
+                let key = tok["key"].to_ascii_lowercase();
+                let val: f64 = tok["val"].parse().unwrap_or(0.0);
+                breakdown.insert(key, val);
             }
 
             let package = self.uid_to_pkg.get(&uid).cloned().unwrap_or_else(|| {
@@ -304,5 +310,59 @@ mod tests {
         let hog = out.entries.iter().find(|e| e.uid == 10_123).unwrap();
         assert!(hog.has_live_wakelock);
         assert_eq!(hog.verdict, AppDrainVerdict::Zombie);
+    }
+
+    // ── Real Android 14/15 (Pixel 8 Pro) fixture ─────────────────────────────
+    // Uppercase "UID", value followed by fg:/bg:/cached:, and the per-app
+    // breakdown on the *next* indented line (key=val). Guards the A14/15 fix.
+    const A15_FORMAT: &str = "
+  Estimated power use (mAh):
+    Capacity: 4716, Computed drain: 1356, actual drain: 1356
+    Global
+     screen: 89.9 apps: 89.9
+     cpu: 289 apps: 352 duration: 5h 0m 1s 450ms
+     wakelock: 103 apps: 103 duration: 3h 35m 35s 621ms
+  UID u0a379: 153 fg: 101 (27m 7s 396ms) bg: 22.4 (15ms) cached: 0.363 (42m 17s 164ms)
+      screen=29.0 cpu=70.2 cpu:fg=64.8 cpu:bg=5.08
+  UID 1000: 48.6 fg: 20 bg: 8.6
+      cpu=30.2 wifi=8.6
+  UID u0a44: 18.0 fg: 15
+      audio=15.0 cpu=2.0
+";
+
+    fn a15_parser() -> BatteryDrainParser {
+        let mut uid_to_pkg = HashMap::new();
+        uid_to_pkg.insert(10_379, PackageName("com.foreground.app".into()));
+        uid_to_pkg.insert(10_044, PackageName("com.spotify.music".into()));
+        BatteryDrainParser {
+            uid_to_pkg,
+            live_wakelock_pkgs: Default::default(),
+            zombie_pkgs: Default::default(),
+        }
+    }
+
+    #[test]
+    fn a15_parses_capacity_and_uppercase_uid_entries() {
+        let out = a15_parser().parse(A15_FORMAT).unwrap();
+        assert_eq!(out.capacity_mah, Some(4716));
+        assert!((out.computed_drain_mah - 1356.0).abs() < 0.001);
+        let fg = out.entries.iter().find(|e| e.uid == 10_379).expect("uppercase UID u0a379 parsed");
+        assert!((fg.drain_mah - 153.0).abs() < 0.001);
+        assert_eq!(out.entries.iter().find(|e| e.uid == 1000).map(|e| e.drain_mah), Some(48.6));
+    }
+
+    #[test]
+    fn a15_captures_continuation_line_breakdown() {
+        let out = a15_parser().parse(A15_FORMAT).unwrap();
+        let fg = out.entries.iter().find(|e| e.uid == 10_379).unwrap();
+        assert!(fg.breakdown.get("cpu").copied().unwrap_or(0.0) > 0.0);
+        assert!(fg.breakdown.get("screen").copied().unwrap_or(0.0) > 0.0);
+    }
+
+    #[test]
+    fn a15_classifies_media_from_continuation() {
+        let out = a15_parser().parse(A15_FORMAT).unwrap();
+        let media = out.entries.iter().find(|e| e.uid == 10_044).unwrap();
+        assert_eq!(media.verdict, AppDrainVerdict::LegitimateMedia);
     }
 }

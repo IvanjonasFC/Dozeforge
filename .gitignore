@@ -22,6 +22,10 @@ src-tauri/WixTools/
 src-tauri/gen/
 **/*.rs.bk
 
+# ---- Bundled scrcpy binaries (~40 MB, fetched by scripts/setup-scrcpy.mjs) ----
+src-tauri/scrcpy/*
+!src-tauri/scrcpy/README.md
+
 # ---- IDE ----
 .vscode/*
 !.vscode/extensions.json

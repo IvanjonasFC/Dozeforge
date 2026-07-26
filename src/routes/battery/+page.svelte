@@ -8,9 +8,16 @@
   import AppName from '$components/AppName.svelte';
   import { labelStore } from '$stores/labels.svelte';
   import { appModalStore } from '$stores/appModal.svelte';
+  import { i18n } from '$stores/i18n.svelte';
+  import BatteryHistory from '$components/BatteryHistory.svelte';
+  import StatCard from '$components/StatCard.svelte';
+
+  const IC_CYCLE = '<path d="M3 2v6h6"/><path d="M3 8a9 9 0 1 0 2.6-5.6L3 8"/>';
+  const IC_BATT = '<rect x="2" y="7" width="16" height="10" rx="2.5"/><line x1="22" y1="11" x2="22" y2="13"/>';
+  const IC_ZAP = '<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>';
   import type { BatteryHealth, BatteryDrain, AppDrainEntry, AvrcpVersion, DisplaySettings, PerformanceSettings } from '$types';
 
-  type Tab = 'health' | 'display' | 'performance';
+  type Tab = 'health' | 'drain' | 'display' | 'performance' | 'history';
   let tab: Tab = $state('health');
 
   let battery: BatteryHealth | null = $state(null);
@@ -38,6 +45,8 @@
   let loadingPerf = $state(false);
   let errorPerf: string | null = $state(null);
   let perfBusy = $state(false);
+  let bypassEnabled = $state(false);
+  let bypassBusy = $state(false);
 
   async function fetchPerf() {
     if (!deviceStore.selected) return;
@@ -74,6 +83,18 @@
 
   let appRestrictions = $state<Record<string, any>>({});
 
+  async function toggleChargeBypass() {
+    if (!deviceStore.selected) return;
+    bypassBusy = true; success = null;
+    try {
+      const next = !bypassEnabled;
+      await api.setChargeBypass(deviceStore.selected.serial, next);
+      bypassEnabled = next;
+      success = next ? 'Charge bypass ENABLED. Power goes directly to components, bypassing the battery. Ideal for gaming.' : 'Charge bypass DISABLED. Normal charging resumed.';
+    } catch (e) { errorHealth = (e as DozeForgeError).message; }
+    finally { bypassBusy = false; }
+  }
+
   async function fetchHealth() {
     if (!deviceStore.selected) return;
     loadingHealth = true; errorHealth = null;
@@ -88,6 +109,11 @@
     loadingDrain = true; errorDrain = null;
     try {
       drain = await api.batteryPerApp(deviceStore.selected.serial);
+      console.debug('[DozeForge] battery_per_app →', {
+        entries: drain?.entries?.length ?? 0,
+        computed_drain_mah: drain?.computed_drain_mah,
+        capacity_mah: drain?.capacity_mah,
+      });
       if (drain?.entries) {
         const pkgs = drain.entries.map(e => e.package).slice(0, 30);
         api.getAppRestrictionsBatch(deviceStore.selected.serial, pkgs)
@@ -96,6 +122,32 @@
       }
     } catch (e) { errorDrain = (e as DozeForgeError).message; }
     finally { loadingDrain = false; }
+  }
+
+  // In-app diagnostic for the per-app drain: runs the exact command on the
+  // device and shows the "Estimated power use" section so we can see what the
+  // ROM actually returns — no terminal or DevTools needed.
+  let drainDiag = $state('');
+  let drainDiagBusy = $state(false);
+  async function diagnoseDrain() {
+    if (!deviceStore.selected) return;
+    drainDiagBusy = true; drainDiag = '';
+    try {
+      const raw = await api.runShell(deviceStore.selected.serial, 'dumpsys batterystats --charged');
+      const idx = raw.indexOf('Estimated power use');
+      const section = idx >= 0 ? raw.slice(idx) : raw;
+      // Show the per-UID lines the parser needs (old format: "Uid u0a123: 23.4").
+      const uidLines = (section.match(/^\s*Uid[^\n]*/gm) ?? []).slice(0, 20);
+      drainDiag =
+        `has_section: ${idx >= 0}\n` +
+        `"Uid " lines found: ${uidLines.length}\n\n` +
+        `--- First "Uid" lines ---\n${uidLines.join('\n') || '(NONE — format differs, need to adapt parser)'}\n\n` +
+        `--- Section head (first 1800 chars) ---\n${section.slice(0, 1800)}`;
+    } catch (e) {
+      drainDiag = 'Error: ' + (e as DozeForgeError).message;
+    } finally {
+      drainDiagBusy = false;
+    }
   }
 
   async function fetchDisplay() {
@@ -110,8 +162,15 @@
     finally { loadingDisplay = false; }
   }
 
-  onMount(() => {
-    if (deviceStore.selected?.state === 'device') { fetchHealth(); fetchDisplay(); fetchDrain(); }
+  // Load (and reload) whenever the connected device changes — covers the initial
+  // mount, first connection, and reconnecting over wireless debugging.
+  let lastLoadedSerial: string | null = null;
+  $effect(() => {
+    const dev = deviceStore.selected;
+    if (dev && dev.state === 'device' && dev.serial !== lastLoadedSerial) {
+      lastLoadedSerial = dev.serial;
+      fetchHealth(); fetchDisplay(); fetchDrain();
+    }
   });
 
   $effect(() => {
@@ -329,18 +388,19 @@
 
 <header class="page-head">
   <div>
-    <h1>Battery+</h1>
-    <p class="muted">Battery health, per-app drain, display refresh rate, and Bluetooth audio tuning.</p>
+    <h1>{i18n.t('Battery')}</h1>
+    <p class="muted">{i18n.t('Battery health, per-app drain, display refresh rate, and Bluetooth audio tuning.')}</p>
   </div>
 </header>
 
 {#if !deviceStore.selected}
-  <div class="card empty"><p class="muted">No device connected.</p></div>
+  <div class="card empty"><p class="muted">{i18n.t('No device connected.')}</p></div>
 {:else}
   <div class="seg" role="tablist">
-    <button class:active={tab === 'health'}  onclick={() => tab = 'health'}  role="tab">Health</button>
-    <button class:active={tab === 'display'} onclick={() => tab = 'display'} role="tab">Display</button>
-    <button class:active={tab === 'performance'} onclick={() => tab = 'performance'} role="tab">Performance</button>
+    <button class:active={tab === 'health'}  onclick={() => tab = 'health'}  role="tab">{i18n.t('Health')}</button>
+    <button class:active={tab === 'display'} onclick={() => tab = 'display'} role="tab">{i18n.t('Display')}</button>
+    <button class:active={tab === 'performance'} onclick={() => tab = 'performance'} role="tab">{i18n.t('Performance')}</button>
+    <button class:active={tab === 'history'} onclick={() => tab = 'history'} role="tab">{i18n.t('History')}</button>
   </div>
 
   {#if success}<div class="success">{success}</div>{/if}
@@ -349,12 +409,16 @@
   {#if tab === 'health'}
     <div class="row-actions">
       <button class="primary" onclick={fetchHealth} disabled={loadingHealth}>
-        {loadingHealth ? 'Reading…' : 'Refresh'}
+        {loadingHealth ? i18n.t('Loading...') : i18n.t('Refresh')}
       </button>
     </div>
     {#if errorHealth}<div class="error">{errorHealth}</div>{/if}
     {#if !battery}
-      <div class="card"><Skeleton lines={6} /></div>
+      {#if loadingHealth}
+        <div class="card"><Skeleton lines={6} /></div>
+      {:else}
+        <div class="card"><p class="muted">{errorHealth ?? i18n.t('No battery data yet. Press Refresh — over Wi-Fi it can take a few seconds.')}</p></div>
+      {/if}
     {:else}
       <div class="grid hero-grid">
         <div class="card ring-card">
@@ -371,49 +435,39 @@
                       class="arc"/>
               {#if battery.health_percent !== null}
                 <text x="100" y="92" text-anchor="middle" class="big-pct">{Math.round(battery.health_percent)}%</text>
-                <text x="100" y="116" text-anchor="middle" class="big-sub">capacity</text>
+                <text x="100" y="116" text-anchor="middle" class="big-sub">{i18n.t('capacity')}</text>
               {:else}
                 <text x="100" y="104" text-anchor="middle" class="big-pct big-muted">?</text>
               {/if}
             </svg>
             <div class="legend">
-              <span><span class="dot" style="background: {healthColor(battery.health_percent)}"></span> Capacity vs design</span>
-              <span><span class="dot" style="background: {levelColor(battery.level_percent)}"></span> Current level</span>
+              <span><span class="dot" style="background: {healthColor(battery.health_percent)}"></span> {i18n.t('Capacity vs design')}</span>
+              <span><span class="dot" style="background: {levelColor(battery.level_percent)}"></span> {i18n.t('Current level')}</span>
             </div>
           </div>
         </div>
 
         <div class="stats-col">
+          <StatCard
+            label={i18n.t('Cycle count')}
+            value={battery.cycle_count !== null ? battery.cycle_count.toLocaleString() : '—'}
+            sub={battery.cycle_count === null ? i18n.t('Not exposed by this ROM.') : ''}
+            icon={IC_CYCLE}
+          />
+          <StatCard
+            label={i18n.t('Capacity')}
+            value={battery.charge_full_uah ? Math.round(battery.charge_full_uah / 1000).toLocaleString() : '—'}
+            unit={battery.charge_full_uah && battery.charge_full_design_uah ? `/ ${Math.round(battery.charge_full_design_uah / 1000).toLocaleString()} mAh` : ''}
+            icon={IC_BATT}
+          />
+          <StatCard
+            label={i18n.t('Voltage')}
+            value={battery.voltage_v !== null ? battery.voltage_v.toFixed(3) : '—'}
+            unit={battery.voltage_v !== null ? 'V' : ''}
+            icon={IC_ZAP}
+          />
           <div class="card stat-tile">
-            <div class="stat-label">Cycle count</div>
-            {#if battery.cycle_count !== null}
-              <div class="big-num mono">{battery.cycle_count.toLocaleString()}</div>
-            {:else}
-              <div class="big-num mono ring-muted">—</div>
-              <p class="muted small">Not exposed by this ROM.</p>
-            {/if}
-          </div>
-          <div class="card stat-tile">
-            <div class="stat-label">Capacity</div>
-            {#if battery.charge_full_uah && battery.charge_full_design_uah}
-              <div class="big-num mono">
-                {Math.round(battery.charge_full_uah / 1000).toLocaleString()}
-                <span class="muted unit">/ {Math.round(battery.charge_full_design_uah / 1000).toLocaleString()} mAh</span>
-              </div>
-            {:else}
-              <div class="big-num mono ring-muted">—</div>
-            {/if}
-          </div>
-          <div class="card stat-tile">
-            <div class="stat-label">Voltage</div>
-            {#if battery.voltage_v !== null}
-              <div class="big-num mono">{battery.voltage_v.toFixed(3)} <span class="muted unit">V</span></div>
-            {:else}
-              <div class="big-num mono ring-muted">—</div>
-            {/if}
-          </div>
-          <div class="card stat-tile">
-            <div class="stat-label">Status</div>
+            <div class="stat-label">{i18n.t('Status')}</div>
             <div class="status-row">
               <span class="badge ok">{battery.status ?? 'unknown'}</span>
               {#if battery.health_status}<span class="badge moderate">{battery.health_status}</span>{/if}
@@ -424,7 +478,7 @@
 
       <div class="card thermo-card">
         <div class="thermo-header">
-          <h3>Temperature</h3>
+          <h3>{i18n.t('Temperature')}</h3>
           {#if battery.temperature_c !== null}
             <div class="thermo-value mono" style="color: {tempColor(battery.temperature_c)}">
               {battery.temperature_c.toFixed(1)}°C
@@ -442,27 +496,25 @@
             </div>
           </div>
         {:else}
-          <p class="muted">Not exposed.</p>
+          <p class="muted">{i18n.t('Not exposed.')}</p>
         {/if}
       </div>
 
-      <p class="muted source-note">Source: <code class="mono">{battery.source ?? 'unavailable'}</code></p>
+      <p class="muted source-note">{i18n.t('Source:')} <code class="mono">{battery.source ?? 'unavailable'}</code></p>
     {/if}
 
-    <h2 style="margin-top: 2.5rem; margin-bottom: 0.75rem;">Per-app drain</h2>
+    <h2 style="margin-top: 2.5rem; margin-bottom: 0.75rem;">{i18n.t('Per-app drain')}</h2>
     <div class="card flat banner">
       <p>
-        Per-app battery drain since the last full charge. Each app gets a verdict so
-        you can act without reading the breakdown. <strong>Zombie</strong> and
-        <strong>Background hog</strong> rows are the highest-impact targets;
-        <strong>Media playback</strong> and <strong>Foreground use</strong> are
-        legitimate drain you should not restrict.
+        {i18n.t('Per-app battery drain since the last full charge. Each app gets a verdict so you can act without reading the breakdown.')} <strong>{i18n.t('Zombie')}</strong> {i18n.t('and')}
+        <strong>{i18n.t('Background hog')}</strong> {i18n.t('rows are the highest-impact targets;')}
+        <strong>{i18n.t('Media playback')}</strong> {i18n.t('and')} <strong>{i18n.t('Foreground use')}</strong> {i18n.t('are legitimate drain you should not restrict.')}
       </p>
     </div>
 
     <div class="row-actions">
       <button class="primary" onclick={fetchDrain} disabled={loadingDrain}>
-        {loadingDrain ? 'Reading…' : 'Refresh'}
+        {loadingDrain ? i18n.t('Reading…') : i18n.t('Refresh')}
       </button>
     </div>
 
@@ -471,33 +523,84 @@
     {#if loadingDrain && !drain}
       <div class="card"><Skeleton lines={8} /></div>
     {:else if !drain || drain.entries.length === 0}
-      <div class="card"><p class="muted">No per-app drain data — device may have been charging recently, or the OEM stripped the `Estimated power use` section.</p></div>
+      <div class="card" style="margin-bottom: 1rem; border-color: var(--warn); background: rgba(245, 158, 11, 0.05);">
+        <p class="muted" style="color: var(--warn);">
+          <strong style="color: var(--warn);">{i18n.t('No per-app drain data available.')}</strong><br/>
+          {i18n.t('Your device is currently charging or the OEM stripped the battery stats. Showing dummy data below so you can preview the layout. Unplug your device and refresh to see live data.')}
+          <br/><br/>
+          <strong style="color: var(--warn);">{i18n.t('Tip:')}</strong>
+          {i18n.t('Battery stats only exist while the phone is on battery. Connect over wireless debugging (unplugged) instead of USB — then let it discharge a while and refresh.')}
+        </p>
+        <div style="margin-top: 0.5rem;">
+          <button class="btn outline small" onclick={diagnoseDrain} disabled={drainDiagBusy}>
+            {drainDiagBusy ? i18n.t('Running…') : i18n.t('Run diagnostic')}
+          </button>
+        </div>
+        {#if drainDiag}
+          <pre style="margin-top: 0.75rem; max-height: 320px; overflow: auto; background: var(--bg-0); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.6rem; font-family: var(--font-mono); font-size: 11px; white-space: pre-wrap; color: var(--fg-2);">{drainDiag}</pre>
+        {/if}
+      </div>
+      <table class="drain-table">
+        <thead>
+          <tr><th>{i18n.t('App / Package')}</th><th>{i18n.t('Share')}</th><th>{i18n.t('Est. Drain')}</th><th>{i18n.t('Verdict')}</th><th></th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>
+              <AppName package="com.android.systemui" />
+            </td>
+            <td>
+              <div class="share-bar">
+                <div class="share-fill" style="width: 45%; background: var(--warn);"></div>
+                <span class="share-label">45%</span>
+              </div>
+            </td>
+            <td class="mono">245 mAh</td>
+            <td><span class="badge elevated">{i18n.t('Background hog')}</span></td>
+            <td></td>
+          </tr>
+          <tr>
+            <td>
+              <AppName package="com.whatsapp" />
+            </td>
+            <td>
+              <div class="share-bar">
+                <div class="share-fill" style="width: 25%; background: var(--good);"></div>
+                <span class="share-label">25%</span>
+              </div>
+            </td>
+            <td class="mono">130 mAh</td>
+            <td><span class="badge ok">{i18n.t('Legitimate foreground')}</span></td>
+            <td></td>
+          </tr>
+        </tbody>
+      </table>
     {:else}
       <!-- KPI strip -->
       <div class="grid drain-kpi">
         <div class="card stat-tile">
-          <div class="stat-label">Computed drain</div>
+          <div class="stat-label">{i18n.t('Computed drain')}</div>
           <div class="big-num mono">{drain.computed_drain_mah.toFixed(1)} <span class="muted unit">mAh</span></div>
           {#if drain.actual_drain_min_mah !== null && drain.actual_drain_max_mah !== null}
             <p class="muted small">
-              Actual range: {drain.actual_drain_min_mah.toFixed(0)}–{drain.actual_drain_max_mah.toFixed(0)} mAh
+              {i18n.t('Actual range: {{min}}–{{max}} mAh', { min: drain.actual_drain_min_mah.toFixed(0), max: drain.actual_drain_max_mah.toFixed(0) })}
             </p>
           {/if}
         </div>
         <div class="card stat-tile">
-          <div class="stat-label">Zombies</div>
+          <div class="stat-label">{i18n.t('Zombies')}</div>
           <div class="big-num mono" class:bad-num={drainTotals.zombies > 0}>{drainTotals.zombies}</div>
-          <p class="muted small">Live wakelock + no foreground use.</p>
+          <p class="muted small">{i18n.t('Live wakelock + no foreground use.')}</p>
         </div>
         <div class="card stat-tile">
-          <div class="stat-label">Background hogs</div>
+          <div class="stat-label">{i18n.t('Background hogs')}</div>
           <div class="big-num mono" class:bad-num={drainTotals.hogs > 0}>{drainTotals.hogs}</div>
-          <p class="muted small">CPU-heavy in background.</p>
+          <p class="muted small">{i18n.t('CPU-heavy in background.')}</p>
         </div>
         <div class="card stat-tile">
-          <div class="stat-label">Radio hogs</div>
+          <div class="stat-label">{i18n.t('Radio hogs')}</div>
           <div class="big-num mono" class:warn-num={drainTotals.radio > 0}>{drainTotals.radio}</div>
-          <p class="muted small">Sensor / GPS / Wi-Fi dominated.</p>
+          <p class="muted small">{i18n.t('Sensor / GPS / Wi-Fi dominated.')}</p>
         </div>
       </div>
 
@@ -505,51 +608,51 @@
       <div class="card" style="margin-top: 1rem;">
         <div class="row" style="justify-content: space-between; gap: 0.75rem; margin-bottom: 0.85rem; flex-wrap: wrap;">
           <div class="seg seg-small" role="tablist">
-            <button class:active={drainVerdictFilter === 'all'}            onclick={() => drainVerdictFilter = 'all'}>All ({drain.entries.length})</button>
-            <button class:active={drainVerdictFilter === 'zombie'}         onclick={() => drainVerdictFilter = 'zombie'}>Zombies ({drainTotals.zombies})</button>
-            <button class:active={drainVerdictFilter === 'background_hog'} onclick={() => drainVerdictFilter = 'background_hog'}>Hogs ({drainTotals.hogs})</button>
-            <button class:active={drainVerdictFilter === 'radio_hog'}      onclick={() => drainVerdictFilter = 'radio_hog'}>Radio ({drainTotals.radio})</button>
+            <button class:active={drainVerdictFilter === 'all'}            onclick={() => drainVerdictFilter = 'all'}>{i18n.t('All')} ({drain.entries.length})</button>
+            <button class:active={drainVerdictFilter === 'zombie'}         onclick={() => drainVerdictFilter = 'zombie'}>{i18n.t('Zombies')} ({drainTotals.zombies})</button>
+            <button class:active={drainVerdictFilter === 'background_hog'} onclick={() => drainVerdictFilter = 'background_hog'}>{i18n.t('Hogs')} ({drainTotals.hogs})</button>
+            <button class:active={drainVerdictFilter === 'radio_hog'}      onclick={() => drainVerdictFilter = 'radio_hog'}>{i18n.t('Radio')} ({drainTotals.radio})</button>
           </div>
           <input
             type="text"
-            placeholder="Filter by package…"
+            placeholder={i18n.t('Filter by package…')}
             bind:value={drainFilter}
             class="filter-input"
           />
         </div>
 
         {#if drainEntries.length === 0}
-          <p class="muted">No apps match the current filter.</p>
+          <p class="muted">{i18n.t('No apps match the current filter.')}</p>
         {:else}
           <div class="scroll-y" style="max-height: 540px;">
             <table>
               <thead>
                 <tr>
-                  <th title="Application package name.">Package</th>
-                  <th title="Estimated milliamp-hours consumed since last full charge.">Drain</th>
-                  <th title="Share of total computed drain.">Share</th>
-                  <th title="Top three sub-components: cpu, wake (wakelocks), wifi, cell, sensor, gps, audio, video.">Breakdown</th>
-                  <th title="Currently holding a wakelock at the time of analysis.">Wakelock</th>
-                  <th title="A process for this app was in Z (zombie) state during the last sample.">State</th>
-                  <th title="Composite verdict of the battery drain behaviour.">Verdict</th>
+                  <th title={i18n.t('Application package name.')}>{i18n.t('Package')}</th>
+                  <th title={i18n.t('Estimated milliamp-hours consumed since last full charge.')}>{i18n.t('Drain')}</th>
+                  <th title={i18n.t('Share of total computed drain.')}>{i18n.t('Share')}</th>
+                  <th title={i18n.t('Top three sub-components: cpu, wake (wakelocks), wifi, cell, sensor, gps, audio, video.')}>{i18n.t('Breakdown')}</th>
+                  <th title={i18n.t('Currently holding a wakelock at the time of analysis.')}>{i18n.t('Wakelock')}</th>
+                  <th title={i18n.t('A process for this app was in Z (zombie) state during the last sample.')}>{i18n.t('State')}</th>
+                  <th title={i18n.t('Composite verdict of the battery drain behaviour.')}>{i18n.t('Verdict')}</th>
                 </tr>
               </thead>
               <tbody>
                 {#each drainEntries as e (e.uid)}
                   {@const b = verdictBadge(e.verdict)}
-                  <tr class:row-bad={e.verdict === 'zombie' || e.verdict === 'background_hog'} class="app-row" onclick={() => appModalStore.open(e.package, 'battery')} style="cursor: pointer;" title="Click to optimize this app">
+                  <tr class:row-bad={e.verdict === 'zombie' || e.verdict === 'background_hog'} class="app-row" onclick={() => appModalStore.open(e.package, 'battery')} style="cursor: pointer;" title={i18n.t('Click to optimize this app')}>
                     <td>
                       <AppName package={e.package} size="sm" hidePackage inline />
                       {#if appRestrictions[e.package]}
                         <div style="display: flex; gap: 4px; margin-top: 4px;">
                           {#if appRestrictions[e.package].wake_lock_ignored}
-                            <span class="badge danger" style="font-size: 9px; padding: 2px 4px;">Wake Blocked</span>
+                            <span class="badge danger" style="font-size: 9px; padding: 2px 4px;">{i18n.t('Wake Blocked')}</span>
                           {/if}
                           {#if appRestrictions[e.package].run_in_background_ignored}
-                            <span class="badge danger" style="font-size: 9px; padding: 2px 4px;">Bg Blocked</span>
+                            <span class="badge danger" style="font-size: 9px; padding: 2px 4px;">{i18n.t('Bg Blocked')}</span>
                           {/if}
                           {#if appRestrictions[e.package].standby_bucket === 'restricted'}
-                            <span class="badge ok" style="font-size: 9px; padding: 2px 4px;">Restricted</span>
+                            <span class="badge ok" style="font-size: 9px; padding: 2px 4px;">{i18n.t('Restricted')}</span>
                           {/if}
                         </div>
                       {/if}
@@ -564,14 +667,14 @@
                     <td class="small mono">{topBreakdown(e.breakdown) || '—'}</td>
                     <td>
                       {#if e.has_live_wakelock}
-                        <span class="badge bad live-dot" title="Holding a partial wakelock right now.">active</span>
+                        <span class="badge bad live-dot" title={i18n.t('Holding a partial wakelock right now.')}>{i18n.t('active')}</span>
                       {:else}
                         <span class="muted">—</span>
                       {/if}
                     </td>
                     <td>
                       {#if e.is_zombie}
-                        <span class="badge bad live-dot" title="Zombie process detected.">zombie</span>
+                        <span class="badge bad live-dot" title={i18n.t('Zombie process detected.')}>{i18n.t('zombie')}</span>
                       {:else}
                         <span class="muted">—</span>
                       {/if}
@@ -588,9 +691,7 @@
   {:else if tab === 'display'}
     <div class="card flat banner">
       <p>
-        Sets <code>min_refresh_rate</code> and <code>peak_refresh_rate</code> system-wide.
-        Anchoring min&nbsp;=&nbsp;peak forces a fixed rate; setting min&nbsp;&lt;&nbsp;peak lets LTPO adapt.
-        Pixel 8 Pro supports 1–120 Hz.
+        {i18n.t('Sets min_refresh_rate and peak_refresh_rate system-wide. Anchoring min = peak forces a fixed rate; setting min < peak lets LTPO adapt. Pixel 8 Pro supports 1–120 Hz.')}
       </p>
     </div>
 
@@ -648,14 +749,14 @@
         
         <div style="display: flex; gap: 1rem; align-items: flex-end; flex-wrap: wrap; margin-bottom: 1rem;">
           <div>
-            <label class="small muted">Custom Density (DPI)</label>
+            <span class="small muted" style="display:block; margin-bottom:0.3rem;">Custom Density (DPI)</span>
             <div style="display: flex; gap: 0.5rem; align-items: center;">
               <input type="number" placeholder="e.g. 420" bind:value={customDensity} disabled={applyBusy} style="width: 120px;" />
               <button class="btn" onclick={applyDensity} disabled={!customDensity || applyBusy}>Set DPI</button>
             </div>
           </div>
           <div>
-            <label class="small muted">Custom Resolution</label>
+            <span class="small muted" style="display:block; margin-bottom:0.3rem;">Custom Resolution</span>
             <div style="display: flex; gap: 0.5rem; align-items: center;">
               <input type="text" placeholder="e.g. 1080x2400" bind:value={customResolution} disabled={applyBusy} style="width: 150px;" />
               <button class="btn" onclick={applyResolution} disabled={!customResolution || applyBusy}>Set Resolution</button>
@@ -710,9 +811,8 @@
           {audioBusy ? '…' : (btAbsVolDisabled ? 'Re-enable' : 'Disable')}
         </button>
       </div>
-      <p class="muted footnote inline-warn">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--warn)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-        This setting only takes effect after re-pairing the Bluetooth device.
+      <p class="muted footnote">
+        ⚠ This setting only takes effect after re-pairing the Bluetooth device.
         Unpair the headset, toggle airplane mode, then pair again.
       </p>
 
@@ -776,10 +876,7 @@
           <button class:active={display.avrcp_version === 'avrcp15'} onclick={() => setAvrcp('avrcp15')} disabled={audioBusy}>1.5</button>
           <button class:active={display.avrcp_version === 'avrcp16'} onclick={() => setAvrcp('avrcp16')} disabled={audioBusy}>1.6</button>
         </div>
-        <p class="muted footnote inline-warn">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--warn)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-          Requires re-pairing the Bluetooth device to take effect.
-        </p>
+        <p class="muted footnote">⚠ Requires re-pairing the Bluetooth device to take effect.</p>
       </div>
     {/if}
     <h2 style="margin-top: 2.5rem; margin-bottom: 0.75rem;">System Performance</h2>
@@ -832,6 +929,8 @@
         </div>
       </div>
     {/if}
+  {:else if tab === 'history'}
+    <BatteryHistory />
   {/if}
 {/if}
 <style>
@@ -840,7 +939,7 @@
   .page-head p { margin: 0; max-width: 540px; }
   .seg {
     display: inline-flex; gap: 2px; padding: 3px;
-    background: var(--bg-2); border: 1px solid var(--border); border-radius: 99px;
+    background: var(--control-bg); border: 1px solid var(--border); border-radius: 99px;
     margin-bottom: 1rem;
   }
   .seg button {
@@ -858,8 +957,8 @@
     color: var(--good); margin-bottom: 1rem; font-size: var(--font-size-sm);
   }
   .banner {
-    padding: 0.65rem 1rem; border-color: rgba(56, 189, 248, 0.2);
-    background: rgba(56, 189, 248, 0.04); margin-bottom: 1rem;
+    padding: 0.65rem 1rem; border-color: rgba(255, 107, 0, 0.2);
+    background: rgba(255, 107, 0, 0.04); margin-bottom: 1rem;
   }
   .banner p { margin: 0; font-size: var(--font-size-sm); color: var(--fg-1); }
   .row-actions { display: flex; justify-content: flex-end; margin-bottom: 0.85rem; }
@@ -905,8 +1004,6 @@
   .preset-row button { font-size: var(--font-size-xs); padding: 0.35rem 0.75rem; }
   .audio-card { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: 1.25rem; }
   .footnote { font-size: var(--font-size-xs); margin: 0.85rem 0 0; }
-  .inline-warn { display: flex; align-items: flex-start; gap: 0.4rem; }
-  .inline-warn svg { flex-shrink: 0; margin-top: 1px; }
 
   /* ---------- By-app drain ---------- */
   .drain-kpi {
@@ -983,7 +1080,7 @@
 
   .preset-row button.active {
     background: var(--accent);
-    color: #00131C;
+    color: var(--on-accent);
     border-color: var(--accent);
   }
 </style>

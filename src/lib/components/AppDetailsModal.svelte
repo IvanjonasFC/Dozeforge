@@ -5,15 +5,41 @@
   import AppName from './AppName.svelte';
   import { page } from '$app/stores';
   import { save } from '@tauri-apps/plugin-dialog';
+  import { i18n } from '$stores/i18n.svelte';
+  import { parseAppInspector, type AppInspection } from '$lib/parsers/appInspector';
+  import { scanForTrackers, type DetectedTracker } from '$lib/parsers/trackerScan';
 
   let details = $state<any>(null);
   let loading = $state(false);
   let error = $state<string | null>(null);
   let success = $state<string | null>(null);
 
+  // F1 — App inspector (permissions & manifest metadata), lazy-loaded.
+  let inspection = $state<AppInspection | null>(null);
+  let trackers = $state<DetectedTracker[]>([]);
+  let inspecting = $state(false);
+  let showInspector = $state(false);
+
+  async function runInspector() {
+    if (!deviceStore.selected || !appModalStore.selectedPackage) return;
+    showInspector = true;
+    if (inspection) return;
+    inspecting = true;
+    try {
+      const raw = await api.runShell(deviceStore.selected.serial, `dumpsys package ${appModalStore.selectedPackage}`);
+      inspection = parseAppInspector(raw);
+      trackers = scanForTrackers(raw); // F9 — offline Exodus tracker heuristic
+    } catch (e) {
+      error = (e as Error).message;
+    } finally {
+      inspecting = false;
+    }
+  }
+
   const context = $derived.by(() => {
-    if ($page.url.pathname.includes('/bloatware')) return 'bloatware';
+    if ($page.url.pathname.includes('/apps')) return 'apps';
     if ($page.url.pathname.includes('/sleep') || $page.url.pathname.includes('/battery')) return 'battery';
+    if ($page.url.pathname.includes('/storage')) return 'storage';
     return 'general';
   });
 
@@ -25,6 +51,10 @@
       error = null;
       success = null;
     }
+    // Reset the inspector whenever the selected package changes.
+    inspection = null;
+    trackers = [];
+    showInspector = false;
   });
 
   async function loadDetails(pkg: string) {
@@ -76,16 +106,27 @@ cmd appops set ${pkg} RUN_ANY_IN_BACKGROUND ignore
 cmd appops set ${pkg} SCHEDULE_EXACT_ALARM ignore
 am set-standby-bucket ${pkg} restricted`;
         await navigator.clipboard.writeText(script);
-        success = 'Tasker / Shell script copied to clipboard!';
+        success = i18n.t('Tasker / Shell script copied to clipboard!');
+      }
+      else if (action === 'backup_data') {
+        const savePath = await save({
+          filters: [{ name: 'Backup Archive', extensions: ['ab', 'tar.gz'] }],
+          defaultPath: `${pkg}_backup.ab`
+        });
+        if (savePath) {
+          success = await api.backupAppData(deviceStore.selected.serial, pkg, savePath);
+          loading = false;
+          return;
+        }
       }
 
       if (action === 'settings') {
-        success = 'Opened on device';
+        success = i18n.t('Opened on device');
       } else if (action === 'uninstall') {
-        success = 'App uninstalled';
+        success = i18n.t('App uninstalled');
         setTimeout(() => appModalStore.close(), 1500);
       } else if (action !== 'copy_tasker_intent') {
-        success = `Action applied successfully`;
+        success = i18n.t('Action applied successfully');
         await loadDetails(pkg);
       }
     } catch (e) {
@@ -96,7 +137,7 @@ am set-standby-bucket ${pkg} restricted`;
   }
 
   function formatBytes(bytes: number | null) {
-    if (bytes === null || bytes === 0) return 'Root Required';
+    if (bytes === null || bytes === 0) return i18n.t('Root Required');
     const k = 1024;
     const sizes = ['B', 'KB', 'MB', 'GB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
@@ -118,7 +159,7 @@ am set-standby-bucket ${pkg} restricted`;
                 <span class="muted small mono" style="font-size: 10px;">v{details.version_name}</span>
               {/if}
               {#if details.is_system}
-                <span class="badge danger" style="font-size: 9px; padding: 2px 4px;">SYSTEM APP</span>
+                <span class="badge danger" style="font-size: 9px; padding: 2px 4px;">{i18n.t('SYSTEM APP')}</span>
               {/if}
             </div>
           {/if}
@@ -131,76 +172,128 @@ am set-standby-bucket ${pkg} restricted`;
         {#if error}<div class="error">{error}</div>{/if}
 
         {#if loading && !details}
-          <div class="spinner">Loading...</div>
+          <div class="spinner">{i18n.t('Loading...')}</div>
         {:else if details}
           <div class="grid two-cols">
             <div class="card stat-card">
-              <span class="muted small">Cache Size</span>
+              <span class="muted small">{i18n.t('Cache Size')}</span>
               <strong class="mono">{formatBytes(details.cache_bytes)}</strong>
             </div>
             <div class="card stat-card">
-              <span class="muted small">Data Size</span>
+              <span class="muted small">{i18n.t('Data Size')}</span>
               <strong class="mono">{formatBytes(details.data_bytes)}</strong>
             </div>
             <div class="card stat-card">
-              <span class="muted small">APK Size</span>
+              <span class="muted small">{i18n.t('APK Size')}</span>
               <strong class="mono">{formatBytes(details.apk_bytes)}</strong>
             </div>
             <div class="card stat-card">
-              <span class="muted small">Standby Bucket</span>
+              <span class="muted small">{i18n.t('Standby Bucket')}</span>
               <strong class="mono" style="text-transform: capitalize;">{details.restrictions.standby_bucket}</strong>
             </div>
           </div>
 
           <div class="restrictions">
-            <h4>Current Restrictions</h4>
+            <h4>{i18n.t('Current Restrictions')}</h4>
             <div class="tags">
               {#if details.restrictions.wake_lock_ignored}
-                <span class="badge danger">Wakelocks Blocked</span>
+                <span class="badge danger">{i18n.t('Wakelocks Blocked')}</span>
               {:else}
-                <span class="badge ok">Wakelocks Allowed</span>
+                <span class="badge ok">{i18n.t('Wakelocks Allowed')}</span>
               {/if}
               {#if details.restrictions.run_in_background_ignored}
-                <span class="badge danger">Background Blocked</span>
+                <span class="badge danger">{i18n.t('Background Blocked')}</span>
               {:else}
-                <span class="badge ok">Background Allowed</span>
+                <span class="badge ok">{i18n.t('Background Allowed')}</span>
               {/if}
             </div>
           </div>
 
+          <div class="inspector">
+            <button class="inspect-toggle" onclick={runInspector}>
+              <span>{i18n.t('Inspect permissions & manifest')}</span>
+              <span>{inspecting ? '…' : (showInspector ? '▾' : '▸')}</span>
+            </button>
+            {#if showInspector}
+              {#if inspecting && !inspection}
+                <p class="muted small" style="margin: 0.5rem 0;">{i18n.t('Reading dumpsys package…')}</p>
+              {:else if inspection}
+                <div class="insp-meta mono">
+                  {#if inspection.versionName}v{inspection.versionName}{/if}
+                  {#if inspection.targetSdk}· targetSDK {inspection.targetSdk}{/if}
+                  {#if inspection.installer}· {inspection.installer}{/if}
+                </div>
+                {#if inspection.flags.length}
+                  <div class="insp-flags">{#each inspection.flags as f}<span class="badge moderate">{f}</span>{/each}</div>
+                {/if}
+                <div class="insp-perms-title">{i18n.t('Trackers')} · {trackers.length}</div>
+                {#if trackers.length > 0}
+                  <div class="trackers">
+                    {#each trackers as t (t.name)}
+                      <span class="tracker-chip" title={t.category}>{t.name}</span>
+                    {/each}
+                  </div>
+                {:else}
+                  <p class="muted small" style="padding: 0 0.85rem 0.3rem;">{i18n.t('No known trackers in declared components (heuristic).')}</p>
+                {/if}
+                <div class="insp-perms-title">{i18n.t('Permissions')} · {inspection.permissions.length}</div>
+                <div class="insp-perms">
+                  {#each inspection.permissions as p (p.name)}
+                    <div class="perm" class:danger={p.dangerous}>
+                      <span class="perm-name mono">{p.name.replace('android.permission.', '')}</span>
+                      {#if p.granted === true}<span class="badge ok">{i18n.t('granted')}</span>
+                      {:else if p.granted === false}<span class="badge danger">{i18n.t('denied')}</span>
+                      {:else}<span class="muted small">{i18n.t('requested')}</span>{/if}
+                    </div>
+                  {/each}
+                  {#if inspection.permissions.length === 0}<p class="muted small">{i18n.t('No permissions found.')}</p>{/if}
+                </div>
+              {/if}
+            {/if}
+          </div>
+
           <div class="actions-grid">
-            {#if context === 'bloatware'}
-              <button class="action-btn danger" onclick={() => executeAction('disable')}>Disable App</button>
-              <button class="action-btn" onclick={() => executeAction('enable')}>Enable App</button>
+            {#if context === 'apps'}
+              <button class="action-btn danger" onclick={() => executeAction('disable')}>{i18n.t('Disable App')}</button>
+              <button class="action-btn" onclick={() => executeAction('enable')}>{i18n.t('Enable App')}</button>
               {#if !details?.is_system}
-                <button class="action-btn danger" onclick={() => { if(confirm('Uninstall this app?')) executeAction('uninstall'); }}>Uninstall App</button>
+                <button class="action-btn danger" onclick={() => { if(confirm(i18n.t('Uninstall this app?'))) executeAction('uninstall'); }}>{i18n.t('Uninstall App')}</button>
               {:else}
-                <button class="action-btn" disabled style="opacity:0.5; cursor:not-allowed;">System App</button>
+                <button class="action-btn" disabled style="opacity:0.5; cursor:not-allowed;">{i18n.t('System App')}</button>
               {/if}
-              <button class="action-btn" onclick={() => executeAction('settings')}>Open on Phone</button>
+              <button class="action-btn" onclick={() => executeAction('settings')}>{i18n.t('Open on Phone')}</button>
+              <button class="action-btn" onclick={() => executeAction('extract_apk')}>{i18n.t('Extract APK')}</button>
+              <button class="action-btn" onclick={() => executeAction('backup_data')}>{i18n.t('Backup App Data')}</button>
             {:else if context === 'battery'}
-              <button class="action-btn" onclick={() => executeAction('ignore_wakelocks')}>Block Wakelocks</button>
-              <button class="action-btn" onclick={() => executeAction('ignore_background')}>Block Background</button>
-              <button class="action-btn" onclick={() => executeAction('block_exact_alarms')}>Block Exact Alarms</button>
-              <button class="action-btn" onclick={() => executeAction('block_sensors')}>Block Sensors</button>
-              <button class="action-btn" onclick={() => executeAction('force_restricted')}>Force Restricted</button>
-              <button class="action-btn" onclick={() => executeAction('force_stop')}>Force Stop</button>
+              <button class="action-btn" onclick={() => executeAction('ignore_wakelocks')}>{i18n.t('Block Wakelocks')}</button>
+              <button class="action-btn" onclick={() => executeAction('ignore_background')}>{i18n.t('Block Background')}</button>
+              <button class="action-btn" onclick={() => executeAction('block_exact_alarms')}>{i18n.t('Block Exact Alarms')}</button>
+              <button class="action-btn" onclick={() => executeAction('block_sensors')}>{i18n.t('Block Sensors')}</button>
+              <button class="action-btn" onclick={() => executeAction('force_restricted')}>{i18n.t('Force Restricted')}</button>
+              <button class="action-btn" onclick={() => executeAction('force_stop')}>{i18n.t('Force Stop')}</button>
+            {:else if context === 'storage'}
+              <button class="action-btn" onclick={() => executeAction('clear_cache')}>{i18n.t('Clear Cache')}</button>
+              <button class="action-btn danger" onclick={() => { if(confirm(i18n.t('Clear ALL app data?'))) executeAction('clear_data'); }}>{i18n.t('Clear Data')}</button>
+              <button class="action-btn" onclick={() => executeAction('extract_apk')}>{i18n.t('Extract APK to PC')}</button>
+              <button class="action-btn" onclick={() => executeAction('backup_data')}>{i18n.t('Backup App Data')}</button>
+              <button class="action-btn" onclick={() => executeAction('settings')}>{i18n.t('Open on Phone')}</button>
             {:else}
-              <button class="action-btn" onclick={() => executeAction('clear_cache')}>Clear Cache</button>
-              <button class="action-btn danger" onclick={() => { if(confirm('Clear ALL app data?')) executeAction('clear_data'); }}>Clear Data</button>
-              <button class="action-btn" onclick={() => executeAction('force_stop')}>Force Stop</button>
+              <button class="action-btn" onclick={() => executeAction('clear_cache')}>{i18n.t('Clear Cache')}</button>
+              <button class="action-btn danger" onclick={() => { if(confirm(i18n.t('Clear ALL app data?'))) executeAction('clear_data'); }}>{i18n.t('Clear Data')}</button>
+              <button class="action-btn" onclick={() => executeAction('force_stop')}>{i18n.t('Force Stop')}</button>
               {#if !details?.is_system}
-                <button class="action-btn danger" onclick={() => { if(confirm('Uninstall this app?')) executeAction('uninstall'); }}>Uninstall App</button>
+                <button class="action-btn danger" onclick={() => { if(confirm(i18n.t('Uninstall this app?'))) executeAction('uninstall'); }}>{i18n.t('Uninstall App')}</button>
               {:else}
-                <button class="action-btn" disabled style="opacity:0.5; cursor:not-allowed;">System App</button>
+                <button class="action-btn" disabled style="opacity:0.5; cursor:not-allowed;">{i18n.t('System App')}</button>
               {/if}
-              <button class="action-btn" onclick={() => executeAction('ignore_wakelocks')}>Block Wakelocks</button>
-              <button class="action-btn" onclick={() => executeAction('ignore_background')}>Block Background</button>
-              <button class="action-btn" onclick={() => executeAction('block_exact_alarms')}>Block Exact Alarms</button>
-              <button class="action-btn" onclick={() => executeAction('block_sensors')}>Block Sensors</button>
-              <button class="action-btn" onclick={() => executeAction('extract_apk')}>Extract APK to PC</button>
-              <button class="action-btn" onclick={() => executeAction('copy_tasker_intent')}>Copy Tasker Script</button>
-              <button class="action-btn" onclick={() => executeAction('settings')}>Open on Phone</button>
+              <button class="action-btn" onclick={() => executeAction('ignore_wakelocks')}>{i18n.t('Block Wakelocks')}</button>
+              <button class="action-btn" onclick={() => executeAction('ignore_background')}>{i18n.t('Block Background')}</button>
+              <button class="action-btn" onclick={() => executeAction('block_exact_alarms')}>{i18n.t('Block Exact Alarms')}</button>
+              <button class="action-btn" onclick={() => executeAction('block_sensors')}>{i18n.t('Block Sensors')}</button>
+              <button class="action-btn" onclick={() => executeAction('extract_apk')}>{i18n.t('Extract APK to PC')}</button>
+              <button class="action-btn" onclick={() => executeAction('backup_data')}>{i18n.t('Backup App Data')}</button>
+              <button class="action-btn" onclick={() => executeAction('copy_tasker_intent')}>{i18n.t('Copy Tasker Script')}</button>
+              <button class="action-btn" onclick={() => executeAction('settings')}>{i18n.t('Open on Phone')}</button>
             {/if}
           </div>
         {/if}
@@ -263,4 +356,22 @@ am set-standby-bucket ${pkg} restricted`;
     border-left: 3px solid var(--good); border-radius: var(--radius);
     color: var(--good); margin-bottom: 1rem; font-weight: 500;
   }
+
+  /* App inspector (F1) */
+  .inspector { margin-bottom: 1.25rem; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+  .inspect-toggle {
+    width: 100%; display: flex; justify-content: space-between; align-items: center;
+    padding: 0.6rem 0.85rem; background: var(--bg-2); border: none; color: var(--fg-1);
+    cursor: pointer; font-size: var(--font-size-sm); border-radius: 0;
+  }
+  .inspect-toggle:hover { background: var(--bg-3); color: var(--fg-0); }
+  .insp-meta { padding: 0.6rem 0.85rem 0; color: var(--fg-2); font-size: 11.5px; }
+  .insp-flags { display: flex; flex-wrap: wrap; gap: 0.3rem; padding: 0.5rem 0.85rem 0; }
+  .insp-perms-title { padding: 0.6rem 0.85rem 0.3rem; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--fg-3); }
+  .insp-perms { max-height: 220px; overflow-y: auto; padding: 0 0.85rem 0.6rem; }
+  .perm { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; padding: 0.25rem 0; border-bottom: 1px solid var(--border); font-size: 12px; }
+  .perm-name { color: var(--fg-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .perm.danger .perm-name { color: var(--warn); }
+  .trackers { display: flex; flex-wrap: wrap; gap: 0.35rem; padding: 0 0.85rem 0.5rem; }
+  .tracker-chip { font-size: 11px; padding: 2px 8px; border-radius: 99px; background: var(--bad-soft); color: var(--bad); border: 1px solid rgba(239, 68, 68, 0.3); }
 </style>

@@ -410,7 +410,7 @@ export const api = {
     call<void>('fastboot_flash', { serial, partition, imagePath }),
     
   getThermalStatus: (serial: string) =>
-    callSilent<{ raw_value: number, label: string }>('get_thermal_status', { raw_value: -1, label: 'Unknown' }, { serial }),
+    callSilent<{ raw_value: number, label: string, temperature: number | null }>('get_thermal_status', { raw_value: -1, label: 'Unknown', temperature: null }, { serial }),
     
   getNetworkUsage: (serial: string) =>
     call<Array<{ package: string, rx_bytes: number, tx_bytes: number }>>('get_network_usage', { serial }),
@@ -436,6 +436,15 @@ export const api = {
   launchScrcpy: (serial: string) =>
     call<void>('launch_scrcpy', { serial }),
 
+  runShell: (serial: string, command: string) =>
+    call<string>('run_shell', { serial, command }),
+
+  setImmersiveMode: (serial: string, mode: 'full' | 'status' | 'navigation' | 'off') =>
+    call<void>('set_immersive_mode', { serial, mode }),
+
+  installApksMultiple: (serial: string, apkPaths: string[], downgrade: boolean, keepData: boolean) =>
+    call<string>('install_apks_multiple', { serial, apkPaths, downgrade, keepData }),
+
   // ---- V2.10: Storage Advanced Commands ----
   getArtStatusBatch: (serial: string, packages: string[]) =>
     call<Record<string, string>>('get_art_status_batch', { serial, packages }),
@@ -455,6 +464,30 @@ export const api = {
 
   stopLogStream: () =>
     call<void>('stop_log_stream'),
+
+  // ---- V4.0: Community Advanced Features ----
+  setChargeBypass: (serial: string, enable: boolean) =>
+    call<void>('set_charge_bypass', { serial, enable }),
+  disableDozeMotion: (serial: string, disable: boolean) =>
+    call<void>('disable_doze_motion', { serial, disable }),
+  tuneGmsHeartbeat: (serial: string, intervalMs: number) =>
+    call<void>('tune_gms_heartbeat', { serial, interval_ms: intervalMs }),
+  runFstrim: (serial: string) =>
+    call<void>('run_fstrim', { serial }),
+  cleanOrphanedData: (serial: string) =>
+    call<string>('clean_orphaned_data', { serial }),
+  setTcpCongestion: (serial: string, algo: string) =>
+    call<void>('set_tcp_congestion', { serial, algo }),
+  forceNetworkMode: (serial: string, mode: number) =>
+    call<void>('force_network_mode', { serial, mode }),
+  sideloadApk: (serial: string, apkPath: string) =>
+    call<string>('sideload_apk', { serial, apk_path: apkPath }),
+  backupAppData: (serial: string, pkg: string, outPath: string) =>
+    call<string>('backup_app_data', { serial, pkg, out_path: outPath }),
+  restoreBackup: (serial: string, path: string) =>
+    call<string>('restore_backup', { serial, path }),
+  enableSensorsOffTile: (serial: string) =>
+    call<void>('enable_sensors_off_tile', { serial }),
 
   onLogBatch: (handler: (lines: string[]) => void): Promise<UnlistenFn> =>
     listen<string[]>('log-batch', (e) => handler(e.payload))

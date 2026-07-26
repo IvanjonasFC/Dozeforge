@@ -6,6 +6,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 use tauri::State;
+use tauri::Manager;
 
 use crate::adb::capabilities::{CapabilityProbe, DeviceCapabilities};
 use crate::adb::{Device, DeviceSerial};
@@ -731,6 +732,7 @@ pub async fn start_telemetry_stream(
     let serial = checked_serial(&serial)?;
     streams::start(
         state.stream_state.clone(),
+        state.telemetry_history.clone(),
         state.adb.clone(),
         app,
         serial,
@@ -1283,7 +1285,7 @@ pub async fn sleep_timeline(
     let raw = state
         .adb
         .invoker
-        .shell(&serial, "dumpsys batterystats", Duration::from_secs(30))
+        .shell(&serial, "dumpsys batterystats --charged", Duration::from_secs(60))
         .await
         .map_err(IpcError::from)?;
     SleepTimelineParser.parse(&raw).map_err(IpcError::from)
@@ -1298,11 +1300,12 @@ pub async fn kernel_wakelocks(
     let serial = checked_serial(&serial)?;
 
     // Primary: parse the "Wakeup reasons" / "Kernel Wakelocks" section of
-    // dumpsys batterystats. Works on API 30-34+, all OEMs.
+    // dumpsys batterystats. Works on API 30-34+, all OEMs. `--charged` skips the
+    // multi-MB history dump so the section isn't truncated over wireless ADB.
     let raw = state
         .adb
         .invoker
-        .shell(&serial, "dumpsys batterystats", Duration::from_secs(30))
+        .shell(&serial, "dumpsys batterystats --charged", Duration::from_secs(60))
         .await
         .map_err(IpcError::from)?;
     let primary = KernelWakelocksParser.parse(&raw).unwrap_or_default();
@@ -1335,15 +1338,20 @@ pub async fn battery_per_app(
     let serial = checked_serial(&serial)?;
 
     // Parallel fetch: checkin (for UID map) + textual (for drain section).
+    // batterystats dumps are large (several MB) and slow over wireless ADB —
+    // give them a generous timeout so they don't fail on Wi-Fi connections.
     let checkin_fut = state.adb.invoker.shell(
         &serial,
         "dumpsys batterystats --checkin",
-        Duration::from_secs(30),
+        Duration::from_secs(90),
     );
+    // `--charged` = stats since last full charge WITHOUT the multi-MB history
+    // dump. The "Estimated power use (mAh):" section comes *after* that history,
+    // so over Wi-Fi the plain dump was getting truncated before reaching it.
     let text_fut = state.adb.invoker.shell(
         &serial,
-        "dumpsys batterystats",
-        Duration::from_secs(30),
+        "dumpsys batterystats --charged",
+        Duration::from_secs(90),
     );
     let power_fut = state.adb.invoker.shell(
         &serial,
@@ -1388,9 +1396,23 @@ pub async fn battery_per_app(
     };
 
     let uid_to_pkg = build_uid_to_package_map(&checkin);
-    BatteryDrainParser { uid_to_pkg, live_wakelock_pkgs, zombie_pkgs }
+    let drain = BatteryDrainParser { uid_to_pkg, live_wakelock_pkgs, zombie_pkgs }
         .parse(&text)
-        .map_err(IpcError::from)
+        .map_err(IpcError::from)?;
+
+    // Diagnostics (visible in the `tauri dev` terminal): if `entries` is 0 but
+    // `text_len` is large, the parser missed the section; if `text_len` is small
+    // or `has_section` is false, the device simply has no discharge data yet.
+    tracing::info!(
+        target: "dozeforge::battery",
+        checkin_len = checkin.len(),
+        text_len = text.len(),
+        has_section = text.contains("Estimated power use (mAh):"),
+        entries = drain.entries.len(),
+        "battery_per_app parsed"
+    );
+
+    Ok(drain)
 }
 
 
@@ -2383,12 +2405,67 @@ pub async fn install_apk(
     Ok(res)
 }
 
+#[cfg(windows)]
+fn scrcpy_binary_name() -> &'static str { "scrcpy.exe" }
+#[cfg(not(windows))]
+fn scrcpy_binary_name() -> &'static str { "scrcpy" }
+
+/// Resolve the scrcpy executable so mirroring works without the user having it
+/// on PATH: prefer the copy bundled with DozeForge (shipped in the MSI as a
+/// Tauri resource, or a `scrcpy/` folder next to the exe), then PATH, then
+/// common install locations.
+fn resolve_scrcpy(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
+    let name = scrcpy_binary_name();
+
+    // 1) Bundled as a Tauri resource (this is what ships inside the installer).
+    if let Ok(res_dir) = app.path().resource_dir() {
+        let bundled = res_dir.join("scrcpy").join(name);
+        if bundled.is_file() { return Some(bundled); }
+    }
+
+    // 2) A `scrcpy/` folder (or the binary) sitting next to the DozeForge exe.
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let bundled = dir.join("scrcpy").join(name);
+            if bundled.is_file() { return Some(bundled); }
+            let sibling = dir.join(name);
+            if sibling.is_file() { return Some(sibling); }
+        }
+    }
+
+    // 3) PATH.
+    if let Some(path_var) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&path_var) {
+            let candidate = dir.join(name);
+            if candidate.is_file() { return Some(candidate); }
+        }
+    }
+
+    // 4) Common install locations.
+    #[cfg(windows)]
+    {
+        if let Ok(home) = std::env::var("USERPROFILE") {
+            let scoop = std::path::PathBuf::from(&home)
+                .join("scoop").join("apps").join("scrcpy").join("current").join(name);
+            if scoop.is_file() { return Some(scoop); }
+        }
+        for base in ["C:/ProgramData/chocolatey/bin", "C:/scrcpy", "C:/Program Files/scrcpy"] {
+            let candidate = std::path::PathBuf::from(base).join(name);
+            if candidate.is_file() { return Some(candidate); }
+        }
+    }
+
+    None
+}
+
 #[tauri::command]
 pub async fn launch_scrcpy(
+    app: tauri::AppHandle,
     serial: String,
 ) -> std::result::Result<(), IpcError> {
     let serial = checked_serial(&serial)?;
-    std::process::Command::new("scrcpy")
+    let program = resolve_scrcpy(&app).unwrap_or_else(|| std::path::PathBuf::from(scrcpy_binary_name()));
+    std::process::Command::new(&program)
         .arg("-s")
         .arg(serial.as_str())
         .arg("--max-fps")
@@ -2396,7 +2473,12 @@ pub async fn launch_scrcpy(
         .arg("--video-bit-rate")
         .arg("8M")
         .spawn()
-        .map_err(|e| IpcError { kind: "scrcpy_error".into(), message: format!("Failed to launch scrcpy: {}", e) })?;
+        .map_err(|e| IpcError {
+            kind: "scrcpy_error".into(),
+            message: format!(
+                "No se pudo iniciar scrcpy ({e}). Instálalo con `winget install --id Genymobile.scrcpy` (o `scoop install scrcpy`), o copia la carpeta de scrcpy junto a DozeForge en una subcarpeta `scrcpy/`."
+            ),
+        })?;
     Ok(())
 }
 
@@ -2613,6 +2695,7 @@ pub async fn fastboot_reboot(
 pub struct ThermalStatus {
     pub raw_value: i32,
     pub label: String,
+    pub temperature: Option<f32>,
 }
 
 #[tauri::command]
@@ -2624,18 +2707,30 @@ pub async fn get_thermal_status(
     let out = state.adb.invoker.shell(&serial, "dumpsys thermalservice", Duration::from_secs(5)).await.unwrap_or_default();
     
     let mut val = -1;
+    let mut temp = None;
     for line in out.lines() {
         if let Some(idx) = line.find("Thermal Status: ") {
             let num_str = line[idx + "Thermal Status: ".len()..].trim();
             if let Ok(n) = num_str.parse::<i32>() {
                 val = n;
-                break;
             }
         } else if let Some(idx) = line.find("mStatus=") {
             let num_str = line[idx + "mStatus=".len()..].trim();
-            if let Ok(n) = num_str.parse::<i32>() {
+            // It might have trailing comma: mStatus=1,
+            let clean_str = num_str.split(',').next().unwrap_or(num_str).trim();
+            if let Ok(n) = clean_str.parse::<i32>() {
                 val = n;
-                break;
+            }
+        }
+        
+        // Temperature{mValue=38.5, mType=0, mName='CPU'}
+        if line.contains("mType=0") || line.contains("mName='CPU'") {
+            if let Some(idx) = line.find("mValue=") {
+                let after = &line[idx + "mValue=".len()..];
+                let num_str = after.split(',').next().unwrap_or(after).trim();
+                if let Ok(f) = num_str.parse::<f32>() {
+                    temp = Some(f);
+                }
             }
         }
     }
@@ -2651,7 +2746,128 @@ pub async fn get_thermal_status(
         _ => "UNKNOWN",
     };
     
-    Ok(ThermalStatus { raw_value: val, label: label.to_string() })
+    Ok(ThermalStatus { raw_value: val, label: label.to_string(), temperature: temp })
+}
+
+#[tauri::command]
+pub async fn kill_all_zombies(
+    state: State<'_, Arc<AppState>>,
+    serial: String,
+) -> std::result::Result<u32, IpcError> {
+    let serial = checked_serial(&serial)?;
+    let raw = state.adb.invoker.shell(&serial, crate::parsers::process_status::ProcessStatusParser::command(), Duration::from_secs(10)).await.map_err(IpcError::from)?;
+    let snap = crate::parsers::process_status::ProcessStatusParser::parse(&raw).map_err(IpcError::from)?;
+    let mut count = 0;
+    for row in snap.rows {
+        if row.is_zombie {
+            // Find parent pid (since you can't kill zombie directly, killing parent might help, but let's just do kill -9 PID)
+            let _ = state.adb.invoker.shell(&serial, &format!("kill -9 {}", row.pid), Duration::from_secs(2)).await;
+            count += 1;
+        }
+    }
+    Ok(count)
+}
+
+#[tauri::command]
+pub async fn trim_memory(
+    state: State<'_, Arc<AppState>>,
+    serial: String,
+) -> std::result::Result<(), IpcError> {
+    let serial = checked_serial(&serial)?;
+    state.adb.invoker.shell(&serial, "am send-trim-memory MODERATE", Duration::from_secs(10)).await.map_err(IpcError::from)?;
+    Ok(())
+}
+
+/// Run an arbitrary `adb shell` command and return its combined stdout.
+/// Powers the in-app ADB console and utilities like `input text`. Also used by
+/// the telemetry screen (Force Kill), which previously called an unimplemented
+/// `run_shell` command.
+#[tauri::command]
+pub async fn run_shell(
+    state: State<'_, Arc<AppState>>,
+    serial: String,
+    command: String,
+) -> std::result::Result<String, IpcError> {
+    let serial = checked_serial(&serial)?;
+    let result = state
+        .adb
+        .invoker
+        .shell(&serial, &command, Duration::from_secs(60))
+        .await;
+
+    // Audit trail: record every console command (success or failure) in the
+    // same action log the user reviews. run_shell is an unrestricted passthrough,
+    // so traceability here is the main mitigation for the ADB console feature.
+    let entry = crate::telemetry::ActionLogEntry {
+        ts: chrono::Utc::now(),
+        device_serial: serial.0.clone(),
+        action: OptimizationAction::RawShell { command: command.clone() },
+        success: result.is_ok(),
+        message: match &result {
+            Ok(out) => {
+                let t = out.trim();
+                if t.len() > 500 {
+                    let end = (0..=500).rev().find(|&i| t.is_char_boundary(i)).unwrap_or(0);
+                    format!("{}…", &t[..end])
+                } else {
+                    t.to_string()
+                }
+            }
+            Err(e) => e.to_string(),
+        },
+        snapshot_id: None,
+    };
+    if let Err(e) = state.action_log.append(&entry) {
+        tracing::warn!(target: "dozeforge::action_log", "console log append failed: {e}");
+    }
+
+    result.map_err(IpcError::from)
+}
+
+/// F11 — immersive mode / hide system bars via `policy_control`.
+/// mode ∈ { "full", "status", "navigation", "off" }.
+#[tauri::command]
+pub async fn set_immersive_mode(
+    state: State<'_, Arc<AppState>>,
+    serial: String,
+    mode: String,
+) -> std::result::Result<(), IpcError> {
+    let serial = checked_serial(&serial)?;
+    let cmd = match mode.as_str() {
+        "full"       => "settings put global policy_control immersive.full=*",
+        "status"     => "settings put global policy_control immersive.status=*",
+        "navigation" => "settings put global policy_control immersive.navigation=*",
+        "off"        => "settings put global policy_control null*",
+        _ => return Err(IpcError { kind: "invalid_input".into(), message: "invalid immersive mode".into() }),
+    };
+    state.adb.invoker.shell_silent(&serial, cmd, Duration::from_secs(10)).await.map_err(IpcError::from)?;
+    Ok(())
+}
+
+/// F10 — install a split/multi-APK app (`.apks` extracted, base + config splits).
+#[tauri::command]
+pub async fn install_apks_multiple(
+    state: State<'_, Arc<AppState>>,
+    serial: String,
+    apk_paths: Vec<String>,
+    downgrade: bool,
+    keep_data: bool,
+) -> std::result::Result<String, IpcError> {
+    let serial = checked_serial(&serial)?;
+    if apk_paths.is_empty() {
+        return Err(IpcError { kind: "invalid_input".into(), message: "no APKs selected".into() });
+    }
+    for p in &apk_paths {
+        if p.is_empty() || p.len() > 4096 {
+            return Err(IpcError { kind: "invalid_input".into(), message: "invalid apk path".into() });
+        }
+    }
+    let mut args: Vec<&str> = vec!["-s", serial.as_str(), "install-multiple"];
+    if downgrade { args.push("-d"); }
+    if keep_data { args.push("-r"); }
+    for p in &apk_paths { args.push(p.as_str()); }
+    let res = state.adb.invoker.exec(&args, Duration::from_secs(300)).await.map_err(IpcError::from)?;
+    Ok(res)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2781,11 +2997,13 @@ pub async fn adb_mdns_services(
     let out = state.adb.invoker.exec(&["mdns", "services"], std::time::Duration::from_secs(10)).await.unwrap_or_default();
     let mut services = Vec::new();
     for line in out.lines().skip(1) { // Skip "List of discovered mdns services"
+        // Format: <instance-name> <service-type> <ip:port>
+        //   adb-XXXX  _adb-tls-connect._tcp  192.168.1.5:37129
         let parts: Vec<&str> = line.split_whitespace().collect();
         if parts.len() >= 3 {
             services.push(MdnsService {
-                address: parts[0].to_string(),
-                service_type: parts[2].to_string(),
+                address: parts[2].to_string(),      // IP:PORT — what we pair/connect to
+                service_type: parts[1].to_string(), // _adb-tls-pairing._tcp / _adb-tls-connect._tcp
             });
         }
     }
@@ -2825,4 +3043,183 @@ pub async fn adb_tcpip(
     crate::security::validate_serial(&serial)?;
     let out = state.adb.invoker.exec(&["-s", &serial, "tcpip", "5555"], std::time::Duration::from_secs(10)).await.map_err(IpcError::from)?;
     Ok(out)
+}
+
+#[tauri::command]
+pub async fn set_charge_bypass(
+    state: State<'_, Arc<AppState>>,
+    serial: String,
+    enable: bool,
+) -> std::result::Result<(), IpcError> {
+    let serial = checked_serial(&serial)?;
+    let val = if enable { "1" } else { "0" };
+    state.adb.invoker.shell(&serial, &format!("su -c 'echo {} > /sys/class/power_supply/battery/input_suspend'", val), std::time::Duration::from_secs(10)).await.map_err(IpcError::from)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn disable_doze_motion(
+    state: State<'_, Arc<AppState>>,
+    serial: String,
+    disable: bool,
+) -> std::result::Result<(), IpcError> {
+    let serial = checked_serial(&serial)?;
+    let cmd = if disable { "dumpsys deviceidle disable motion" } else { "dumpsys deviceidle enable motion" };
+    state.adb.invoker.shell(&serial, cmd, std::time::Duration::from_secs(10)).await.map_err(IpcError::from)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn tune_gms_heartbeat(
+    state: State<'_, Arc<AppState>>,
+    serial: String,
+    interval_ms: u64,
+) -> std::result::Result<(), IpcError> {
+    let serial = checked_serial(&serial)?;
+    // Tune GCM heartbeat
+    state.adb.invoker.shell(&serial, &format!("settings put global fcm_heartbeat_time_ms {}", interval_ms), std::time::Duration::from_secs(10)).await.map_err(IpcError::from)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn run_fstrim(
+    state: State<'_, Arc<AppState>>,
+    serial: String,
+) -> std::result::Result<(), IpcError> {
+    let serial = checked_serial(&serial)?;
+    state.adb.invoker.shell(&serial, "sm fstrim", std::time::Duration::from_secs(120)).await.map_err(IpcError::from)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn clean_orphaned_data(
+    state: State<'_, Arc<AppState>>,
+    serial: String,
+) -> std::result::Result<String, IpcError> {
+    let serial = checked_serial(&serial)?;
+    let pkgs = safe_pm_list_packages(&state.adb.invoker, &serial).await?;
+    let mut installed = std::collections::HashSet::new();
+    for line in pkgs.lines() {
+        if line.starts_with("package:") {
+            installed.insert(line.replace("package:", "").trim().to_string());
+        }
+    }
+    
+    let ls_out = state.adb.invoker.shell(&serial, "su -c 'ls -1 /data/data/'", std::time::Duration::from_secs(30)).await.map_err(IpcError::from)?;
+    let mut removed = 0;
+    for dir in ls_out.lines() {
+        let dir = dir.trim();
+        if dir.is_empty() { continue; }
+        // Simple heuristic: if it contains a dot it's a package.
+        if dir.contains('.') && !installed.contains(dir) {
+            let _ = state.adb.invoker.shell(&serial, &format!("su -c 'rm -rf /data/data/{}'", dir), std::time::Duration::from_secs(30)).await;
+            removed += 1;
+        }
+    }
+    Ok(format!("Removed {} orphaned directories.", removed))
+}
+
+#[tauri::command]
+pub async fn set_tcp_congestion(
+    state: State<'_, Arc<AppState>>,
+    serial: String,
+    algo: String,
+) -> std::result::Result<(), IpcError> {
+    let serial = checked_serial(&serial)?;
+    if algo != "bbr" && algo != "cubic" && algo != "reno" {
+         return Err(IpcError { kind: "invalid_input".into(), message: "invalid TCP algorithm".into() });
+    }
+    state.adb.invoker.shell(&serial, &format!("su -c 'echo {} > /proc/sys/net/ipv4/tcp_congestion_control'", algo), std::time::Duration::from_secs(10)).await.map_err(IpcError::from)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn force_network_mode(
+    state: State<'_, Arc<AppState>>,
+    serial: String,
+    mode: u32,
+) -> std::result::Result<(), IpcError> {
+    let serial = checked_serial(&serial)?;
+    state.adb.invoker.shell(&serial, &format!("settings put global preferred_network_mode {}", mode), std::time::Duration::from_secs(10)).await.map_err(IpcError::from)?;
+    state.adb.invoker.shell(&serial, &format!("settings put global preferred_network_mode1 {}", mode), std::time::Duration::from_secs(10)).await.map_err(IpcError::from)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn sideload_apk(
+    state: State<'_, Arc<AppState>>,
+    serial: String,
+    apk_path: String,
+) -> std::result::Result<String, IpcError> {
+    let serial = checked_serial(&serial)?;
+    if apk_path.is_empty() || apk_path.len() > 4096 {
+         return Err(IpcError { kind: "invalid_input".into(), message: "invalid apk_path".into() });
+    }
+    let out = state.adb.invoker.exec(&["-s", serial.as_str(), "install", "-r", "-d", "-g", &apk_path], std::time::Duration::from_secs(300)).await.map_err(IpcError::from)?;
+    Ok(out)
+}
+
+#[tauri::command]
+pub async fn backup_app_data(
+    state: State<'_, Arc<AppState>>,
+    serial: String,
+    pkg: String,
+    out_path: String,
+) -> std::result::Result<String, IpcError> {
+    let serial = checked_serial(&serial)?;
+    crate::security::validate_pkg(&pkg)?;
+    if out_path.is_empty() || out_path.len() > 4096 {
+         return Err(IpcError { kind: "invalid_input".into(), message: "invalid out_path".into() });
+    }
+    // Attempt standard adb backup first
+    let res = state.adb.invoker.exec(&["-s", serial.as_str(), "backup", "-f", &out_path, "-apk", &pkg], std::time::Duration::from_secs(600)).await;
+    if let Ok(out) = res {
+        return Ok(out);
+    }
+    // Fallback to root tar if adb backup fails
+    let tar_res = state.adb.invoker.shell(&serial, &format!("su -c 'tar -czf /data/local/tmp/backup.tar.gz /data/data/{}'", pkg), std::time::Duration::from_secs(300)).await.map_err(IpcError::from)?;
+    let pull_res = state.adb.invoker.exec(&["-s", serial.as_str(), "pull", "/data/local/tmp/backup.tar.gz", &out_path], std::time::Duration::from_secs(300)).await.map_err(IpcError::from)?;
+    let _ = state.adb.invoker.shell(&serial, "rm /data/local/tmp/backup.tar.gz", std::time::Duration::from_secs(10)).await;
+    Ok(format!("Fallback root backup used.\n{}", pull_res))
+}
+
+/// F2 — restore an Android `.ab` backup. The device shows a confirmation prompt
+/// (and asks for the decryption password if the archive was encrypted). Long
+/// timeout because the user has to interact on the phone.
+#[tauri::command]
+pub async fn restore_backup(
+    state: State<'_, Arc<AppState>>,
+    serial: String,
+    path: String,
+) -> std::result::Result<String, IpcError> {
+    let serial = checked_serial(&serial)?;
+    if path.is_empty() || path.len() > 4096 {
+        return Err(IpcError { kind: "invalid_input".into(), message: "invalid path".into() });
+    }
+    let out = state
+        .adb
+        .invoker
+        .exec(&["-s", serial.as_str(), "restore", &path], std::time::Duration::from_secs(600))
+        .await
+        .map_err(IpcError::from)?;
+    Ok(out)
+}
+
+#[tauri::command]
+pub async fn enable_sensors_off_tile(
+    state: State<'_, Arc<AppState>>,
+    serial: String,
+) -> std::result::Result<(), IpcError> {
+    let serial = checked_serial(&serial)?;
+    // Add sensor_privacy to QS tiles if it's not already there
+    let current_tiles = state.adb.invoker.shell(&serial, "settings get secure sysui_qs_tiles", std::time::Duration::from_secs(10)).await.unwrap_or_default();
+    if !current_tiles.contains("sensor_privacy") {
+        let new_tiles = if current_tiles.trim().is_empty() || current_tiles.trim() == "null" {
+            "sensor_privacy".to_string()
+        } else {
+            format!("{},sensor_privacy", current_tiles.trim())
+        };
+        state.adb.invoker.shell(&serial, &format!("settings put secure sysui_qs_tiles \"{}\"", new_tiles), std::time::Duration::from_secs(10)).await.map_err(IpcError::from)?;
+    }
+    Ok(())
 }

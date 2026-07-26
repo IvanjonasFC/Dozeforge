@@ -12,6 +12,11 @@ class DeviceStore {
   rootMode = $state(false);
   hasRootAccess = $state(false);
 
+  batteryLevel = $state<number | null>(null);
+  batteryStatus = $state<string | null>(null);
+
+  private pingTimer: number | null = null;
+
   async refresh() {
     this.loading = true;
     this.error = null;
@@ -23,6 +28,8 @@ class DeviceStore {
       if (this.selected && !this.devices.find((d) => d.serial === this.selected!.serial)) {
         this.selected = null;
         this.capabilities = null;
+        this.batteryLevel = null;
+        this.batteryStatus = null;
       }
       if (!this.selected) {
         const firstOnline = this.devices.find((d) => d.state === 'device');
@@ -59,6 +66,27 @@ class DeviceStore {
       }
     } catch (e) {
       this.error = (e as Error).message;
+    }
+
+    if (this.pingTimer) clearInterval(this.pingTimer);
+    this.batteryLevel = null;
+    this.batteryStatus = null;
+    if (this.selected && this.selected.state === 'device') {
+      this.updateBattery();
+      this.pingTimer = window.setInterval(() => this.updateBattery(), 5000);
+    }
+  }
+
+  // Heartbeat: keeps the alive-check and feeds the topbar battery gauge.
+  private async updateBattery() {
+    if (!this.selected) return;
+    try {
+      const b = await api.batteryHealth(this.selected.serial);
+      this.batteryLevel = b.level_percent;
+      this.batteryStatus = b.status;
+    } catch (e) {
+      console.warn('Heartbeat ping failed, refreshing devices...');
+      await this.refresh();
     }
   }
 

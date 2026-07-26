@@ -65,6 +65,8 @@ pub struct ProcessRow {
     pub package: Option<String>,
     /// Snapshot flag: high CPU usage in this single sample.
     pub is_hog_candidate: bool,
+    /// Smart Hog Detection
+    pub is_smart_hog: bool,
     /// Definitive: process is in Z state.
     pub is_zombie: bool,
 }
@@ -76,50 +78,116 @@ pub struct ProcessSnapshot {
     pub hog_candidate_count: u32,
     pub total_cpu_percent: f32,
     pub total_rss_kb: u64,
+    pub cpu_user: f32,
+    pub cpu_sys: f32,
+    pub cpu_iowait: f32,
+    pub mem_available_mb: u64,
+    pub swap_free_mb: u64,
+    pub swap_total_mb: u64,
+    #[serde(skip)]
+    pub raw_stat: Option<crate::ipc::streams::SystemStatsRaw>,
 }
 
 /// Threshold above which a single-sample %CPU is flagged as hog candidate.
 pub const HOG_CPU_THRESHOLD: f32 = 15.0;
 
-// Match: PID USER S %CPU RSS ARGS (whitespace separated)
-// USER can be "root", "u0_a123", "shell", "system", etc.
-static ROW: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(
-        r"^\s*(?P<pid>\d+)\s+(?P<user>\S+)\s+(?P<state>[A-Z])\s+(?P<cpu>\d+(?:\.\d+)?)\s+(?P<rss>\d+)(?:\s+(?P<args>.+))?$",
-    )
-    .unwrap()
-});
+// Removed static regex in favor of dynamic header parsing
 
 pub struct ProcessStatusParser;
 
 impl ProcessStatusParser {
     pub fn command() -> &'static str {
-        // -b: batch (no interactive), -n 1: one iteration, -q: quiet
-        // -o: explicit columns we care about
-        "top -b -n 1 -q -o PID,USER,S,%CPU,RSS,ARGS"
+        // Always use batch mode (-b). The old `|| top -n 1` fallback ran top in
+        // interactive mode, whose ANSI/redraw output parsed into garbage rows
+        // (stray `'`, `-s`, zeroed CPU/RSS). Every fallback now stays batch.
+        "cat /proc/stat; echo '---'; cat /proc/meminfo; echo '---'; top -b -n 1 -o PID,USER,S,%CPU,RSS,ARGS 2>/dev/null || top -b -n 1 2>/dev/null"
     }
 
     pub fn parse(input: &str) -> Result<ProcessSnapshot> {
+        let parts: Vec<&str> = input.split("---").collect();
+        let stat_str = parts.get(0).copied().unwrap_or("");
+        let mem_str = parts.get(1).copied().unwrap_or("");
+        let top_str = parts.get(2).copied().unwrap_or(input);
+
         let mut rows = Vec::new();
         let mut zombie_count = 0u32;
         let mut hog_count = 0u32;
         let mut total_cpu = 0.0f32;
         let mut total_rss = 0u64;
 
-        for line in input.lines() {
-            // Skip header and empty/noise lines
-            if line.trim().is_empty() || line.contains("PID") && line.contains("USER") {
+        let mut idx_pid = None;
+        let mut idx_user = None;
+        let mut idx_s = None;
+        let mut idx_cpu = None;
+        let mut idx_rss = None;
+        let mut idx_args = None;
+        let mut header_found = false;
+
+        for line in top_str.lines() {
+            let line = line.trim();
+            if line.is_empty() {
                 continue;
             }
 
-            let Some(caps) = ROW.captures(line) else { continue };
-            let pid: u32 = caps["pid"].parse().unwrap_or(0);
-            let user = caps["user"].to_string();
-            let state_char = caps["state"].chars().next().unwrap_or('?');
+            if !header_found && line.contains("PID") && (line.contains("USER") || line.contains("UID") || line.contains("PR")) {
+                header_found = true;
+                let tokens: Vec<&str> = line.split_whitespace().collect();
+                let mut data_col_idx = 0;
+                for &t in tokens.iter() {
+                    match t {
+                        "PID" => idx_pid = Some(data_col_idx),
+                        "USER" | "UID" => idx_user = Some(data_col_idx),
+                        "S" | "STAT" => idx_s = Some(data_col_idx),
+                        "%CPU" | "CPU%" => idx_cpu = Some(data_col_idx),
+                        "RSS" | "RES" | "RPRVT" => idx_rss = Some(data_col_idx),
+                        "ARGS" | "Name" | "CMD" | "COMMAND" | "PROG" => idx_args = Some(data_col_idx),
+                        "S[%CPU]" => {
+                            idx_s = Some(data_col_idx);
+                            idx_cpu = Some(data_col_idx + 1);
+                            data_col_idx += 1;
+                        }
+                        _ => {}
+                    }
+                    data_col_idx += 1;
+                }
+                continue;
+            }
+
+            if !header_found { continue; }
+
+            let tokens: Vec<&str> = line.split_whitespace().collect();
+            let pid_idx = idx_pid.unwrap_or(0);
+            if tokens.len() <= pid_idx { continue; }
+
+            let pid_str = tokens[pid_idx];
+            let Ok(pid) = pid_str.parse::<u32>() else { continue };
+            if pid == 0 { continue; }
+
+            let user = idx_user.and_then(|i| tokens.get(i)).unwrap_or(&"?").to_string();
+            let state_str = idx_s.and_then(|i| tokens.get(i)).unwrap_or(&"?");
+            let state_char = state_str.chars().next().unwrap_or('?');
             let state = ProcessState::from_char(state_char);
-            let cpu_percent: f32 = caps["cpu"].parse().unwrap_or(0.0);
-            let rss_kb: u64 = caps["rss"].parse().unwrap_or(0);
-            let args = caps.name("args").map(|m| m.as_str().to_string()).unwrap_or_default();
+
+            let cpu_str = idx_cpu.and_then(|i| tokens.get(i)).unwrap_or(&"0").trim_end_matches('%');
+            let cpu_percent: f32 = cpu_str.parse().unwrap_or(0.0);
+
+            let rss_str = idx_rss.and_then(|i| tokens.get(i)).unwrap_or(&"0");
+            let rss_kb: u64 = if rss_str.ends_with('M') || rss_str.ends_with('m') {
+                rss_str.trim_end_matches(|c| c == 'M' || c == 'm').parse::<f64>().unwrap_or(0.0) as u64 * 1024
+            } else if rss_str.ends_with('K') || rss_str.ends_with('k') {
+                rss_str.trim_end_matches(|c| c == 'K' || c == 'k').parse().unwrap_or(0)
+            } else if rss_str.ends_with('G') || rss_str.ends_with('g') {
+                rss_str.trim_end_matches(|c| c == 'G' || c == 'g').parse::<f64>().unwrap_or(0.0) as u64 * 1024 * 1024
+            } else {
+                rss_str.parse().unwrap_or(0)
+            };
+
+            let args_idx = idx_args.unwrap_or(tokens.len().saturating_sub(1));
+            let args = if args_idx < tokens.len() {
+                tokens[args_idx..].join(" ")
+            } else {
+                String::new()
+            };
 
             let package = extract_package(&args);
             let is_zombie = state == ProcessState::Zombie;
@@ -143,12 +211,59 @@ impl ProcessStatusParser {
                 args,
                 package,
                 is_hog_candidate,
+                is_smart_hog: false,
                 is_zombie,
             });
         }
 
-        // Sort by CPU descending for UI convenience
         rows.sort_by(|a, b| b.cpu_percent.partial_cmp(&a.cpu_percent).unwrap_or(std::cmp::Ordering::Equal));
+
+        let mut mem_available_mb = 0;
+        let mut swap_free_mb = 0;
+        let mut swap_total_mb = 0;
+        let mut mem_free = 0;
+        let mut buffers = 0;
+        let mut cached = 0;
+
+        for line in mem_str.lines() {
+            let line = line.trim();
+            if let Some(v) = line.strip_prefix("MemAvailable:") {
+                if let Some(kb) = parse_kb(v) { mem_available_mb = kb / 1024; }
+            } else if let Some(v) = line.strip_prefix("MemFree:") {
+                if let Some(kb) = parse_kb(v) { mem_free = kb / 1024; }
+            } else if let Some(v) = line.strip_prefix("Buffers:") {
+                if let Some(kb) = parse_kb(v) { buffers = kb / 1024; }
+            } else if let Some(v) = line.strip_prefix("Cached:") {
+                if let Some(kb) = parse_kb(v) { cached = kb / 1024; }
+            } else if let Some(v) = line.strip_prefix("SwapFree:") {
+                if let Some(kb) = parse_kb(v) { swap_free_mb = kb / 1024; }
+            } else if let Some(v) = line.strip_prefix("SwapTotal:") {
+                if let Some(kb) = parse_kb(v) { swap_total_mb = kb / 1024; }
+            }
+        }
+
+        if mem_available_mb == 0 {
+            mem_available_mb = mem_free + buffers + cached;
+        }
+
+        let mut raw_stat = None;
+        if let Some(line) = stat_str.lines().find(|l| l.starts_with("cpu ")) {
+            let tokens: Vec<&str> = line.split_whitespace().collect();
+            if tokens.len() >= 8 {
+                let user: u64 = tokens[1].parse().unwrap_or(0) + tokens[2].parse::<u64>().unwrap_or(0);
+                let sys: u64 = tokens[3].parse().unwrap_or(0) + tokens[6].parse::<u64>().unwrap_or(0) + tokens[7].parse::<u64>().unwrap_or(0);
+                let idle: u64 = tokens[4].parse().unwrap_or(0);
+                let io: u64 = tokens[5].parse().unwrap_or(0);
+                let steal: u64 = tokens.get(8).and_then(|s| s.parse().ok()).unwrap_or(0);
+                let guest: u64 = tokens.get(9).and_then(|s| s.parse().ok()).unwrap_or(0);
+                let guest_nice: u64 = tokens.get(10).and_then(|s| s.parse().ok()).unwrap_or(0);
+                let total = user + sys + idle + io + steal + guest + guest_nice;
+                
+                raw_stat = Some(crate::ipc::streams::SystemStatsRaw {
+                    user, sys, io, idle, total,
+                });
+            }
+        }
 
         Ok(ProcessSnapshot {
             rows,
@@ -156,8 +271,19 @@ impl ProcessStatusParser {
             hog_candidate_count: hog_count,
             total_cpu_percent: total_cpu,
             total_rss_kb: total_rss,
+            cpu_user: 0.0,
+            cpu_sys: 0.0,
+            cpu_iowait: 0.0,
+            mem_available_mb,
+            swap_free_mb,
+            swap_total_mb,
+            raw_stat,
         })
     }
+}
+
+fn parse_kb(raw: &str) -> Option<u64> {
+    raw.trim().trim_end_matches("kB").trim().parse().ok()
 }
 
 /// Extract a package name (java-like dotted identifier) from a process args

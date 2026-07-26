@@ -1,6 +1,7 @@
 <script lang="ts">
   import Fuse from 'fuse.js';
   import { onMount } from 'svelte';
+  import { i18n } from '$stores/i18n.svelte';
 
   interface Props {
     open: boolean;
@@ -8,33 +9,35 @@
   }
   let { open = $bindable(false), onNavigate }: Props = $props();
 
-  const commands = [
-    { id: 'nav:overview',   label: 'Go to Overview',    hint: 'snapshot of device state',    action: () => onNavigate('/') },
-    { id: 'nav:telemetry',  label: 'Go to Telemetry',   hint: 'live process table',          action: () => onNavigate('/telemetry/') },
-    { id: 'nav:sleep',      label: 'Go to Sleep',       hint: 'wakelock analysis',           action: () => onNavigate('/sleep/') },
-    { id: 'nav:battery',    label: 'Go to Battery',     hint: 'health, cycles, sysfs',       action: () => onNavigate('/battery/') },
-    { id: 'nav:privacy',    label: 'Go to Privacy',     hint: 'DNS, firewall, clipboard',    action: () => onNavigate('/privacy/') },
-    { id: 'nav:storage',    label: 'Go to Storage',     hint: 'inventory, trim, dexopt',     action: () => onNavigate('/storage/') },
-    { id: 'nav:actions',    label: 'Go to Actions',     hint: 'apply optimizations',         action: () => onNavigate('/actions/') },
-    { id: 'nav:bloatware',  label: 'Go to Bloatware',   hint: 'package manager',             action: () => onNavigate('/bloatware/') },
-    { id: 'nav:automation', label: 'Go to Automation',  hint: 'export scripts',              action: () => onNavigate('/automation/') },
-    { id: 'privacy:firewall', label: 'Open Firewall', hint: 'block background apps',         action: () => onNavigate('/privacy/?tab=firewall') },
-    { id: 'privacy:dns',      label: 'Open Private DNS', hint: 'AdGuard, Cloudflare, ...',   action: () => onNavigate('/privacy/?tab=dns') },
-    { id: 'privacy:clipboard', label: 'Open Clipboard guard', hint: 'deny READ_CLIPBOARD',   action: () => onNavigate('/privacy/?tab=clipboard') },
-    { id: 'storage:inventory', label: 'Storage inventory', hint: 'apps by code size',        action: () => onNavigate('/storage/?tab=inventory') },
-    { id: 'storage:trim',      label: 'Trim system caches', hint: 'free up disk space',      action: () => onNavigate('/storage/?tab=optimize') },
-    { id: 'storage:dexopt',    label: 'Run ART dexopt', hint: 'destructive',                action: () => onNavigate('/storage/?tab=optimize') },
-    { id: 'profile:conservative', label: 'Apply Conservative profile', hint: 'safest',       action: () => onNavigate('/actions/?profile=conservative') },
-    { id: 'profile:balanced',     label: 'Apply Balanced profile',     hint: 'recommended',  action: () => onNavigate('/actions/?profile=balanced') },
-    { id: 'profile:aggressive',   label: 'Apply Aggressive profile',   hint: 'all user apps',action: () => onNavigate('/actions/?profile=aggressive') },
-    { id: 'profile:nuclear',      label: 'Apply Nuclear profile',      hint: 'max savings',  action: () => onNavigate('/actions/?profile=nuclear') },
-  ];
+  const commands = $derived([
+    { id: 'nav:overview',   label: i18n.t('Go to Overview'),      hint: i18n.t('snapshot of device state'),         action: () => onNavigate('/') },
+    { id: 'nav:fleet',      label: i18n.t('Go to Fleet'),         hint: i18n.t('bulk actions on many devices'),     action: () => onNavigate('/fleet/') },
+    { id: 'nav:apps',       label: i18n.t('Go to App Manager'),   hint: i18n.t('bloatware, firewall, permissions'), action: () => onNavigate('/apps/') },
+    { id: 'nav:sleep',      label: i18n.t('Go to Doze & Sleep'),  hint: i18n.t('wakelock analysis'),                action: () => onNavigate('/sleep/') },
+    { id: 'nav:battery',    label: i18n.t('Go to Battery'),       hint: i18n.t('health, cycles, sysfs'),            action: () => onNavigate('/battery/') },
+    { id: 'nav:storage',    label: i18n.t('Go to Storage'),       hint: i18n.t('inventory, trim, dexopt'),          action: () => onNavigate('/storage/') },
+    { id: 'nav:safety',     label: i18n.t('Go to Profiles & Snapshots'), hint: i18n.t('1-click optimize, undo'),     action: () => onNavigate('/safety/') },
+    { id: 'nav:backup',     label: i18n.t('Go to Backup & Restore'), hint: i18n.t('encrypted .ab backups'),          action: () => onNavigate('/backup/') },
+    { id: 'nav:tweaks',     label: i18n.t('Go to Advanced Tweaks'), hint: i18n.t('RAM Plus, phantom limit, …'),      action: () => onNavigate('/tweaks/') },
+    { id: 'nav:network',    label: i18n.t('Go to Network & DNS'), hint: i18n.t('private DNS, data saver'),          action: () => onNavigate('/network/') },
+    { id: 'nav:system',     label: i18n.t('Go to System Tweaks'), hint: i18n.t('global system settings'),           action: () => onNavigate('/system/') },
+    { id: 'nav:telemetry',  label: i18n.t('Go to Telemetry'),     hint: i18n.t('live process table'),               action: () => onNavigate('/telemetry/') },
+    { id: 'nav:tools',      label: i18n.t('Go to Diagnostics & Tools'), hint: i18n.t('logs, bugreport, automation'), action: () => onNavigate('/tools/') },
+    { id: 'nav:files',      label: i18n.t('Go to File Manager'),  hint: i18n.t('browse device storage'),            action: () => onNavigate('/files/') },
+    { id: 'apps:permissions', label: i18n.t('Open Permissions Audit'), hint: i18n.t('review granted permissions'),  action: () => onNavigate('/apps/?tab=permissions') },
+    { id: 'network:dns',      label: i18n.t('Open Private DNS'),  hint: i18n.t('AdGuard, Cloudflare, ...'),          action: () => onNavigate('/network/') },
+    { id: 'storage:inventory', label: i18n.t('Storage inventory'), hint: i18n.t('apps by code size'),               action: () => onNavigate('/storage/') },
+    { id: 'tools:logs',       label: i18n.t('Open Live Logs'),    hint: i18n.t('logcat / dmesg stream'),            action: () => onNavigate('/tools/?tab=logs') },
+    { id: 'tools:bugreport',  label: i18n.t('Capture Bugreport'), hint: i18n.t('full device dump'),                 action: () => onNavigate('/tools/?tab=bugreport') },
+    { id: 'tools:actions',    label: i18n.t('Advanced Tools'),    hint: i18n.t('power-user operations'),            action: () => onNavigate('/tools/?tab=actions') },
+    { id: 'tools:profiles',   label: i18n.t('Automation Profiles'), hint: i18n.t('export / import scripts'),        action: () => onNavigate('/tools/?tab=profiles') },
+  ]);
 
-  const fuse = new Fuse(commands, {
+  const fuse = $derived(new Fuse(commands, {
     keys: ['label', 'hint', 'id'],
     threshold: 0.4,
     includeScore: false
-  });
+  }));
 
   let query = $state('');
   let cursor = $state(0);
@@ -81,7 +84,7 @@
         bind:this={inputEl}
         bind:value={query}
         onkeydown={onKey}
-        placeholder="Type a command or page name…"
+        placeholder={i18n.t('Type a command or page name…')}
         spellcheck="false"
         autocomplete="off"
       />
@@ -101,13 +104,13 @@
           </li>
         {/each}
         {#if results.length === 0}
-          <li class="empty">No matches for "{query}"</li>
+          <li class="empty">{i18n.t('No matches for "{{query}}"', { query })}</li>
         {/if}
       </ul>
       <footer>
-        <span><kbd>↑↓</kbd> navigate</span>
-        <span><kbd>↵</kbd> select</span>
-        <span><kbd>Esc</kbd> close</span>
+        <span><kbd>↑↓</kbd> {i18n.t('navigate')}</span>
+        <span><kbd>↵</kbd> {i18n.t('select')}</span>
+        <span><kbd>Esc</kbd> {i18n.t('close')}</span>
       </footer>
     </div>
   </div>

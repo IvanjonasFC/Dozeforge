@@ -65,6 +65,10 @@ pub enum OptimizationAction {
     SetGameMode { package: PackageName, mode: u8 },
     /// Sets the maximum number of background processes. None = standard.
     SetBackgroundProcessLimit { limit: Option<u32> },
+    /// A raw command run from the in-app ADB console. NOT executed through the
+    /// optimizer pipeline — this variant exists purely so console activity can
+    /// be recorded in the same audit log for traceability.
+    RawShell { command: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -189,6 +193,7 @@ impl OptimizationAction {
                     "settings delete global background_process_limit".to_string()
                 }
             }
+            Self::RawShell { command } => command.clone(),
         }
     }
 
@@ -222,7 +227,8 @@ impl OptimizationAction {
             | Self::SetAggressiveDoze { .. }
             | Self::SetBackgroundScan { .. }
             | Self::SetDataSaver { .. }
-            | Self::SetBackgroundProcessLimit { .. } => None,
+            | Self::SetBackgroundProcessLimit { .. }
+            | Self::RawShell { .. } => None,
         }
     }
 

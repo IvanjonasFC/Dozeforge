@@ -8,6 +8,7 @@
   import Skeleton from '$components/Skeleton.svelte';
   import CapabilitiesBanner from '$components/CapabilitiesBanner.svelte';
   import AppName from '$components/AppName.svelte';
+  import { i18n } from '$stores/i18n.svelte';
   import type {
     OverviewSnapshot,
     MiscategorizedApp,
@@ -68,9 +69,9 @@
   function fmtAge(d: Date | null): string {
     if (!d) return '';
     const s = Math.floor((Date.now() - d.getTime()) / 1000);
-    if (s < 60) return `${s}s ago`;
-    if (s < 3600) return `${Math.floor(s / 60)}m ago`;
-    return `${Math.floor(s / 3600)}h ago`;
+    if (s < 60) return `${s}s`;
+    if (s < 3600) return `${Math.floor(s / 60)}m`;
+    return `${Math.floor(s / 3600)}h`;
   }
 
   function fmtBytes(n: number | null | undefined): string {
@@ -105,11 +106,11 @@
   });
 
   const scoreSummary = $derived.by(() => {
-    if (healthScore === null) return 'Connect a device to see your score.';
-    if (healthScore >= 85) return 'Your device is well-tuned. Minor cleanup possible.';
-    if (healthScore >= 70) return 'Good shape — a few areas could use attention.';
-    if (healthScore >= 50) return 'Several optimizations available. See cards below.';
-    return 'Significant background load and disk pressure detected.';
+    if (healthScore === null) return i18n.t('Connect a device to see your score.');
+    if (healthScore >= 85) return i18n.t('Your device is well-tuned. Minor cleanup possible.');
+    if (healthScore >= 70) return i18n.t('Good shape — a few areas could use attention.');
+    if (healthScore >= 50) return i18n.t('Several optimizations available. See cards below.');
+    return i18n.t('Significant background load and disk pressure detected.');
   });
 
   // Score ring math (circumference of r=80 circle = 502)
@@ -168,24 +169,28 @@
 
 <header class="page-head">
   <div>
-    <h1>Overview</h1>
-    <p class="muted">Your device at a glance — start here.</p>
+    <h1>{i18n.t('Overview')}</h1>
+    <p class="muted">{i18n.t('Your device at a glance — start here.')}</p>
   </div>
   <div class="head-actions">
-    {#if loadedAt}<span class="muted age-label">Updated {fmtAge(loadedAt)}</span>{/if}
-    <button class="primary" onclick={forceRefresh} disabled={loading || !deviceStore.selected}>
+    {#if loadedAt}<span class="muted age-label">{i18n.t('Updated')} {fmtAge(loadedAt)} {i18n.t('ago')}</span>{/if}
+    <button onclick={forceRefresh} disabled={loading || !deviceStore.selected}>
       {#if loading}
         <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" class="spin">
           <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 2v3.5h-3.5"/>
         </svg>
-        Refreshing…
-      {:else}Refresh{/if}
+        {i18n.t('Refreshing...')}
+      {:else}{i18n.t('Refresh')}{/if}
+    </button>
+    <button class="primary" onclick={() => goto('/safety/')} disabled={!deviceStore.selected} title={i18n.t('One-click optimize with automatic snapshot')}>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+      {i18n.t('Optimize in 1 click')}
     </button>
   </div>
 </header>
 
 {#if !deviceStore.selected}
-  <div class="card empty"><p class="muted">No device connected. Plug in a phone via USB with debugging enabled.</p></div>
+  <div class="card empty"><p class="muted">{i18n.t('No device connected. Plug in a phone via USB with debugging enabled.')}</p></div>
 {:else if loading && !snap}
   <div class="card"><Skeleton lines={8} /></div>
 {:else if error}
@@ -214,27 +219,27 @@
       </svg>
     </div>
     <div class="hero-text">
-      <div class="hero-eyebrow">Device health score</div>
+      <div class="hero-eyebrow">{i18n.t('Device health score')}</div>
       <h2 class="hero-title">
         {#if healthScore !== null}
-          Your phone is at <span class="hero-num" style="color: {ringColorVar}">{healthScore}%</span> of optimal
+          {i18n.t('Your phone is at')} <span class="hero-num" style="color: {ringColorVar}">{healthScore}%</span> {i18n.t('of optimal')}
         {:else}
-          Calculating…
+          {i18n.t('Calculating...')}
         {/if}
       </h2>
       <p class="hero-sub">{scoreSummary}</p>
       <div class="hero-meta">
-        <span><strong>{miscat.length}</strong> apps mis-categorized</span>
+        <span><strong>{miscat.length}</strong> {i18n.t('apps mis-categorized')}</span>
         <span>·</span>
-        <span><strong>{firewalledCount}</strong> apps firewalled</span>
+        <span><strong>{firewalledCount}</strong> {i18n.t('apps firewalled')}</span>
         <span>·</span>
-        <span><strong>{snap.battery.health_percent?.toFixed(0) ?? '—'}%</strong> battery health</span>
+        <span><strong>{snap.battery.health_percent?.toFixed(0) ?? '—'}%</strong> {i18n.t('battery health')}</span>
       </div>
     </div>
   </section>
 
   <!-- ===== 3 ACTION CARDS ===== -->
-  <h3 class="section-title">Recommended actions</h3>
+  <h3 class="section-title">{i18n.t('Recommended actions')}</h3>
   <div class="action-grid">
     <button class="action-card" onclick={() => goto('/sleep/')}>
       <div class="action-icon" style="color: var(--bad); background: color-mix(in srgb, var(--bad) 15%, transparent);">
@@ -243,45 +248,45 @@
       <div class="action-body">
         <div class="action-title">
           {#if miscat.length === 0}
-            No background drain detected
+            {i18n.t('No background drain detected')}
           {:else}
             <span class="counter">{miscat.length}</span>
-            app{miscat.length === 1 ? '' : 's'} draining battery in background
+            {miscat.length === 1 ? i18n.t('app draining battery in background') : i18n.t('apps draining battery in background')}
           {/if}
         </div>
         <p class="action-desc">
           {#if miscat.length > 0}
-            These apps run in active bucket while you barely use them. Demote them to restricted.
+            {i18n.t('These apps run in active bucket while you barely use them. Demote them to restricted.')}
           {:else}
-            Your wake-locks and standby buckets look healthy.
+            {i18n.t('Your wake-locks and standby buckets look healthy.')}
           {/if}
         </p>
-        <span class="action-cta">Go to Sleep →</span>
+        <span class="action-cta">{i18n.t('Go to Sleep →')}</span>
       </div>
     </button>
 
-    <button class="action-card" onclick={() => goto('/privacy/')}>
+    <button class="action-card" onclick={() => goto('/network/')}>
       <div class="action-icon" style="color: var(--warn); background: color-mix(in srgb, var(--warn) 15%, transparent);">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
       </div>
       <div class="action-body">
         <div class="action-title">
           {#if privacy?.dns.mode === 'hostname'}
-            DNS hardened ✓
+            {i18n.t('DNS hardened ✓')}
           {:else if firewalledCount > 0}
-            <span class="counter">{firewalledCount}</span> apps firewalled, DNS not hardened
+            <span class="counter">{firewalledCount}</span> {i18n.t('apps firewalled')}, {i18n.t('Privacy not yet configured')}
           {:else}
-            Privacy not yet configured
+            {i18n.t('Privacy not yet configured')}
           {/if}
         </div>
         <p class="action-desc">
           {#if privacy?.dns.mode === 'hostname'}
-            Using {privacy.dns.hostname}. Block individual apps from background or clipboard.
+            {i18n.t('Using {{hostname}}. Block individual apps from background or clipboard.', { hostname: privacy.dns.hostname })}
           {:else}
-            Set a privacy DNS (AdGuard, Cloudflare) and firewall background-hungry apps.
+            {i18n.t('Set a privacy DNS (AdGuard, Cloudflare) and firewall background-hungry apps.')}
           {/if}
         </p>
-        <span class="action-cta">Go to Privacy →</span>
+        <span class="action-cta">{i18n.t('Go to Network →')}</span>
       </div>
     </button>
 
@@ -292,21 +297,21 @@
       <div class="action-body">
         <div class="action-title">
           {#if cacheBytes > 1_000_000_000}
-            <span class="counter">{fmtBytes(cacheBytes)}</span> of system caches
+            <span class="counter">{fmtBytes(cacheBytes)}</span> {i18n.t('of system caches')}
           {:else if dataUsedPercent != null && dataUsedPercent > 85}
-            Disk {dataUsedPercent!.toFixed(0)}% full
+            {i18n.t('Disk {{percent}}% full', { percent: dataUsedPercent!.toFixed(0) })}
           {:else}
-            Storage well-managed
+            {i18n.t('Storage well-managed')}
           {/if}
         </div>
         <p class="action-desc">
           {#if cacheBytes > 1_000_000_000}
-            Trim system caches and clear per-app caches to recover space.
+            {i18n.t('Trim system caches and clear per-app caches to recover space.')}
           {:else}
-            Inventory your installed apps by APK size and recompile slow ones.
+            {i18n.t('Inventory your installed apps by APK size and recompile slow ones.')}
           {/if}
         </p>
-        <span class="action-cta">Go to Storage →</span>
+        <span class="action-cta">{i18n.t('Go to Storage →')}</span>
       </div>
     </button>
   </div>
@@ -314,35 +319,44 @@
   <CapabilitiesBanner />
 
   <!-- ===== Device snapshot (existing data) ===== -->
-  <h3 class="section-title">Right now</h3>
+  <h3 class="section-title">{i18n.t('Right now')}</h3>
   <div class="grid three-col">
-    <div class="card">
-      <div class="card-eyebrow">Battery</div>
-      <div class="card-main mono">{snap.battery.level_percent?.toFixed(0) ?? '—'}%</div>
+    <div class="card stat">
+      <div class="stat-head">
+        <span class="card-eyebrow">{i18n.t('Battery')}</span>
+        <svg class="stat-ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="15" height="10" rx="2.5"/><line x1="21" y1="11" x2="21" y2="13"/></svg>
+      </div>
+      <div class="card-main">{snap.battery.level_percent?.toFixed(0) ?? '—'}%</div>
       <div class="card-detail">
-        <span class="muted">{snap.battery.status ?? 'unknown'}</span>
+        <span class="muted">{i18n.t(snap.battery.status ?? 'unknown')}</span>
         {#if snap.battery.temperature_c !== null}
           · <span style="color: {tempColor(snap.battery.temperature_c)}">{snap.battery.temperature_c.toFixed(1)}°C</span>
         {/if}
       </div>
     </div>
-    <div class="card">
-      <div class="card-eyebrow">Storage</div>
-      <div class="card-main mono">
+    <div class="card stat">
+      <div class="stat-head">
+        <span class="card-eyebrow">{i18n.t('Storage')}</span>
+        <svg class="stat-ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="12" x2="2" y2="12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/><line x1="6" y1="16" x2="6.01" y2="16"/></svg>
+      </div>
+      <div class="card-main">
         {dataUsedPercent != null ? dataUsedPercent.toFixed(0) : '—'}%
       </div>
       <div class="card-detail muted">
         {#if storage}
           {fmtBytes((storage?.diskstats?.data_total_bytes ?? 0) - (storage?.diskstats?.data_free_bytes ?? 0))}
-          of {fmtBytes(storage?.diskstats?.data_total_bytes)}
+          {i18n.t('of')} {fmtBytes(storage?.diskstats?.data_total_bytes)}
         {:else}
-          Loading...
+          {i18n.t('Loading...')}
         {/if}
       </div>
     </div>
-    <div class="card">
-      <div class="card-eyebrow">Memory (RAM)</div>
-      <div class="card-main mono">
+    <div class="card stat">
+      <div class="stat-head">
+        <span class="card-eyebrow">{i18n.t('Memory (RAM)')}</span>
+        <svg class="stat-ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 2v2M15 2v2M9 20v2M15 20v2M20 9h2M20 14h2M2 9h2M2 14h2"/></svg>
+      </div>
+      <div class="card-main">
         {#if snap.ram_used_mb && snap.ram_total_mb}
           {((snap.ram_used_mb / snap.ram_total_mb) * 100).toFixed(0)}%
         {:else}
@@ -351,7 +365,7 @@
       </div>
       <div class="card-detail muted">
         {#if snap.ram_used_mb && snap.ram_total_mb}
-          {(snap.ram_used_mb / 1024).toFixed(1)} GB of {(snap.ram_total_mb / 1024).toFixed(1)} GB
+          {(snap.ram_used_mb / 1024).toFixed(1)} GB {i18n.t('of')} {(snap.ram_total_mb / 1024).toFixed(1)} GB
         {:else}
           Unknown
         {/if}
@@ -477,53 +491,20 @@
     display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.85rem;
   }
   @media (max-width: 600px) { .grid.three-col { grid-template-columns: 1fr; } }
+  .stat-head {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 0.6rem;
+  }
+  .stat-ic { color: var(--fg-3); transition: color var(--t-fast); flex-shrink: 0; }
+  .card.stat:hover .stat-ic { color: var(--accent); }
   .card-eyebrow {
-    font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.08em;
-    color: var(--fg-3); font-weight: 600; margin-bottom: 0.5rem;
+    font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.14em;
+    color: var(--fg-3); font-weight: 700; margin: 0;
   }
   .card-main {
-    font-size: 28px; font-weight: 700; letter-spacing: -0.02em;
-    color: var(--fg-0); line-height: 1.1;
+    font-family: var(--font-display);
+    font-size: 34px; font-weight: 700; letter-spacing: -0.03em;
+    color: var(--fg-0); line-height: 1.05;
   }
-  .card-detail { font-size: var(--font-size-sm); color: var(--fg-2); margin-top: 0.35rem; }
-
-  /* === Compact drain table === */
-  .compact-drain { padding: 0.85rem 1.15rem; }
-  .drain-table { width: 100%; font-size: var(--font-size-sm); }
-  .drain-table th {
-    font-size: 10.5px;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--fg-3);
-    font-weight: 600;
-    padding-bottom: 0.65rem;
-    border-bottom: 1px solid var(--border);
-  }
-  .drain-table td { padding: 0.55rem 0.5rem; }
-  .drain-table .unit { font-size: 10.5px; font-weight: 400; }
-  .drain-table tr.row-bad td:first-child {
-    border-left: 2px solid var(--bad);
-    padding-left: calc(0.5rem - 2px);
-  }
-  .drain-footer {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-top: 0.75rem;
-    padding-top: 0.65rem;
-    border-top: 1px solid var(--border);
-    font-size: var(--font-size-xs);
-  }
-  .drain-footer strong { color: var(--fg-0); }
-  .link-btn {
-    background: none;
-    border: none;
-    color: var(--accent);
-    padding: 0;
-    cursor: pointer;
-    font-family: inherit;
-    font-size: var(--font-size-xs);
-    font-weight: 600;
-  }
-  .link-btn:hover { color: var(--fg-0); }
+  .card-detail { font-size: var(--font-size-sm); color: var(--fg-2); margin-top: 0.45rem; }
 </style>

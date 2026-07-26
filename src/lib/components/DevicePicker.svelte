@@ -4,6 +4,7 @@
 
   import { api } from '$lib/tauri/api';
   import PairingModal from './PairingModal.svelte';
+  import { i18n } from '$stores/i18n.svelte';
 
   let pairingAddress = $state('');
   let pairingOpen = $state(false);
@@ -33,7 +34,7 @@
       const serial = value.replace('tcpip_', '');
       try {
         await api.adbTcpip(serial);
-        alert('TCP/IP mode enabled on 5555. You can now disconnect the USB cable and pair via Wi-Fi.');
+        alert(i18n.t('TCP/IP mode enabled on 5555. You can now disconnect the USB cable and pair via Wi-Fi.'));
         await deviceStore.refresh();
       } catch (err) {
         alert('Failed to enable TCP/IP: ' + err);
@@ -53,9 +54,42 @@
     }
     return d.product ?? d.serial;
   }
+
+  // Deduplicated discovered services (mDNS often lists the same one twice),
+  // hiding any that are already connected.
+  const discovered = $derived.by(() => {
+    const seen = new Set<string>();
+    const out: { address: string; service_type: string }[] = [];
+    for (const s of deviceStore.mdnsServices) {
+      if (deviceStore.devices.some((d) => d.serial === s.address)) continue;
+      const key = s.address + s.service_type;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(s);
+    }
+    return out;
+  });
+
+  const batteryColor = $derived.by(() => {
+    const l = deviceStore.batteryLevel;
+    if (l === null) return 'var(--fg-3)';
+    if (l <= 15) return 'var(--bad)';
+    if (l <= 40) return 'var(--warn)';
+    return 'var(--good)';
+  });
 </script>
 
 <div class="picker">
+  {#if deviceStore.batteryLevel !== null}
+    <div class="battery" title={i18n.t('Battery')} style="color: {batteryColor}">
+      <svg width="24" height="13" viewBox="0 0 26 14" fill="none" aria-hidden="true">
+        <rect x="0.7" y="0.7" width="21.6" height="12.6" rx="2.6" stroke="var(--fg-2)" stroke-width="1.3"/>
+        <rect x="23.4" y="4.3" width="2.2" height="5.4" rx="1" fill="var(--fg-2)"/>
+        <rect x="2.4" y="2.4" height="9.2" rx="1.2" width={19.2 * (deviceStore.batteryLevel ?? 0) / 100} fill="currentColor"/>
+      </svg>
+      <span class="battery-pct">{deviceStore.batteryLevel}%</span>
+    </div>
+  {/if}
   <div class="select-wrapper">
     {#if deviceStore.selected}
       <span class="state-dot" data-state={deviceStore.selected.state} title={deviceStore.selected.state}></span>
@@ -72,42 +106,40 @@
       aria-label="Select device"
     >
       {#if deviceStore.devices.length === 0 && deviceStore.mdnsServices.length === 0}
-        <option value="">No devices detected</option>
+        <option value="">{i18n.t('No devices detected')}</option>
       {:else}
-        <option value="" disabled>Select device…</option>
+        <option value="" disabled>{i18n.t('Select device…')}</option>
 
         {#if deviceStore.devices.length > 0}
-          <optgroup label="Connected Devices">
+          <optgroup label={i18n.t('Connected Devices')}>
             {#each deviceStore.devices as device (device.serial)}
               <option value={device.serial}>{label(device)}</option>
             {/each}
           </optgroup>
           {#if deviceStore.devices.some(d => d.state === 'device' && !d.serial.includes(':'))}
-            <optgroup label="Enable Wireless (USB)">
+            <optgroup label={i18n.t('Enable Wireless (USB)')}>
               {#each deviceStore.devices as device (device.serial)}
                 {#if device.state === 'device' && !device.serial.includes(':')}
-                  <option value="tcpip_{device.serial}">Enable TCP/IP on {label(device)}</option>
+                  <option value="tcpip_{device.serial}">{i18n.t('Enable TCP/IP on {{label}}', { label: label(device) })}</option>
                 {/if}
               {/each}
             </optgroup>
           {/if}
         {/if}
 
-        {#if deviceStore.mdnsServices.filter(s => !deviceStore.devices.some(d => d.serial === s.address)).length > 0}
-          <optgroup label="Discovered Network Devices">
-            {#each deviceStore.mdnsServices.filter(s => !deviceStore.devices.some(d => d.serial === s.address)) as service (service.address + service.service_type)}
+        {#if discovered.length > 0}
+          <optgroup label={i18n.t('Discovered Network Devices')}>
+            {#each discovered as service (service.address + service.service_type)}
               {#if service.service_type.includes('pairing')}
-                <option value="pair_{service.address}">Pair: {service.address}</option>
-              {:else if service.service_type.includes('connect')}
-                <option value="conn_{service.address}">Connect: {service.address}</option>
+                <option value="pair_{service.address}">{i18n.t('Pair:')} {service.address}</option>
               {:else}
-                <option value="conn_{service.address}">Connect: {service.address}</option>
+                <option value="conn_{service.address}">{i18n.t('Connect:')} {service.address}</option>
               {/if}
             {/each}
           </optgroup>
         {:else}
-          <optgroup label="Network Devices">
-            <option disabled value="fw_warn">None found (Check Windows Firewall)</option>
+          <optgroup label={i18n.t('Network Devices')}>
+            <option disabled value="fw_warn">{i18n.t('None found — open "Pair device with pairing code" on the phone')}</option>
           </optgroup>
         {/if}
       {/if}
@@ -162,7 +194,8 @@
     -webkit-appearance: none;
     padding: 0.4rem 1.85rem 0.4rem 2.1rem;
     min-width: 220px;
-    background: var(--bg-2);
+    background: var(--control-bg);
+    border: 1px solid var(--border);
     color: var(--fg-0);
     font-size: var(--font-size-sm);
     font-weight: 500;
@@ -170,8 +203,19 @@
     border-radius: var(--radius);
   }
   select:hover:not(:disabled) {
-    background: var(--bg-3);
+    background: var(--control-bg-hover);
     border-color: var(--border-strong);
+  }
+  .battery {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+  }
+  .battery-pct {
+    font-size: var(--font-size-xs);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    color: currentColor;
   }
   .reload-btn {
     padding: 0.4rem 0.55rem;

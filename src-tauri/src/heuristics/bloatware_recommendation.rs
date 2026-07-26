@@ -29,6 +29,10 @@ pub struct BloatwareRecommendation {
     pub recommendation: Recommendation,
     pub notes: String,
     pub category: Option<BloatCategory>,
+    /// True when the recommendation was corroborated by the UAD-NG community
+    /// database (an explicit human review), not just our prefix heuristic.
+    #[serde(default)]
+    pub community_verified: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
@@ -53,6 +57,8 @@ pub enum BloatCategory {
 }
 
 pub fn recommend(verdict: &PackageVerdict) -> BloatwareRecommendation {
+    // Safety invariant: a package our classifier flags Critical (core OS /
+    // system uid) is NEVER overridden, not even by a community "Recommended".
     if verdict.tier == RiskTier::Critical {
         return BloatwareRecommendation {
             package: verdict.package.clone(),
@@ -60,17 +66,36 @@ pub fn recommend(verdict: &PackageVerdict) -> BloatwareRecommendation {
             recommendation: Recommendation::DoNotTouch,
             notes: "Core OS or system-uid package. Disabling will break the device.".to_string(),
             category: None,
+            community_verified: false,
         };
     }
 
-    let (category, recommendation, notes) = classify_by_name(&verdict.package, verdict.tier);
+    let (category, mut recommendation, base_notes) = classify_by_name(&verdict.package, verdict.tier);
+    let mut notes = base_notes.to_string();
+    let mut community_verified = false;
+
+    // Cross-reference the UAD-NG community database. When present, the human-
+    // reviewed removal rating is authoritative and refines our heuristic.
+    if let Some(entry) = crate::heuristics::uad_list::lookup(&verdict.package) {
+        use crate::heuristics::uad_list::UadRemoval;
+        community_verified = true;
+        recommendation = match entry.removal {
+            UadRemoval::Recommended => Recommendation::PreinstalledBloat,
+            UadRemoval::Advanced | UadRemoval::Expert => Recommendation::SystemUseWithCare,
+            UadRemoval::Unsafe => Recommendation::DoNotTouch,
+        };
+        if !entry.description.is_empty() {
+            notes = format!("{} (UAD-NG: {:?})", entry.description, entry.removal);
+        }
+    }
 
     BloatwareRecommendation {
         package: verdict.package.clone(),
         tier: verdict.tier,
         recommendation,
-        notes: notes.to_string(),
+        notes,
         category,
+        community_verified,
     }
 }
 
@@ -360,8 +385,27 @@ mod tests {
     #[test]
     fn detects_facebook_preload() {
         let r = recommend(&verdict("com.facebook.katana", RiskTier::Moderate));
+        // Category still comes from our prefix classifier.
         assert_eq!(r.category, Some(BloatCategory::PreloadedSocial));
-        assert_eq!(r.recommendation, Recommendation::SafeToDisable);
+        // Facebook is in the UAD-NG list (removal=Recommended), so the community
+        // rating refines our verdict and marks it verified.
+        assert!(r.community_verified);
+        assert_eq!(r.recommendation, Recommendation::PreinstalledBloat);
+    }
+
+    #[test]
+    fn uad_unsafe_downgrades_to_do_not_touch() {
+        // GMS is Moderate/Elevated by uid heuristic in this synthetic verdict,
+        // but UAD marks it Unsafe → must become DoNotTouch and verified.
+        let r = recommend(&verdict("com.google.android.gms", RiskTier::Elevated));
+        assert!(r.community_verified);
+        assert_eq!(r.recommendation, Recommendation::DoNotTouch);
+    }
+
+    #[test]
+    fn non_uad_package_is_not_verified() {
+        let r = recommend(&verdict("com.random.indiegame", RiskTier::Moderate));
+        assert!(!r.community_verified);
     }
 
     #[test]

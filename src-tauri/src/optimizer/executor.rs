@@ -64,7 +64,16 @@ impl<'a> Executor<'a> {
                 .find(|p| &p.name == pkg)
                 .ok_or_else(|| Error::other(format!("package {} not installed", pkg)))?;
             let verdict: PackageVerdict = classify(installed, self.manifest);
-            if verdict.tier == RiskTier::Critical {
+            
+            // Allow safe maintenance operations on critical apps
+            let is_safe_operation = matches!(
+                action,
+                OptimizationAction::ClearAppCache { .. } |
+                OptimizationAction::CompilePackage { .. } |
+                OptimizationAction::ResetCompilation { .. }
+            );
+
+            if verdict.tier == RiskTier::Critical && !is_safe_operation {
                 return Err(Error::SystemPackageRefused(pkg.0.clone()));
             }
         }

@@ -7,6 +7,7 @@
   import Skeleton from '$components/Skeleton.svelte';
   import AppName from '$components/AppName.svelte';
   import { labelStore } from '$stores/labels.svelte';
+  import { i18n } from '$stores/i18n.svelte';
   import type {
     AuditReport,
     MiscategorizedApp,
@@ -30,6 +31,10 @@
   let dozeState = $state<DozeState | null>(null);
   let loading = $state(false);
   let perfBusy = $state(false);
+  let motionBusy = $state(false);
+  let motionDisabled = $state(false);
+  let heartbeatBusy = $state(false);
+  let heartbeatInterval = $state(900000);
   let error = $state<string | null>(null);
   let success = $state<string | null>(null);
   let showAdvanced = $state(false);
@@ -86,7 +91,7 @@
     // Open the in-place app modal instead of navigating away from the page;
     // the modal already picks up the "battery" context from the URL (`/sleep`)
     // and surfaces the relevant wakelock / standby / background controls.
-    appModalStore.open(pkg, 'battery');
+    appModalStore.open(pkg);
   }
 
   async function toggleDoze() {
@@ -109,6 +114,28 @@
       perfSettings.ble_scan_always_enabled = target;
     } catch (e) { error = (e as DozeForgeError).message; }
     finally { perfBusy = false; }
+  }
+
+  async function toggleDozeMotion() {
+    if (!deviceStore.selected) return;
+    motionBusy = true; error = null; success = null;
+    try {
+      const next = !motionDisabled;
+      await api.disableDozeMotion(deviceStore.selected.serial, next);
+      motionDisabled = next;
+      success = next ? 'Motion sensor detection in Doze DISABLED. Deep sleep will engage even while moving.' : 'Motion sensor detection in Doze RESTORED to default.';
+    } catch (e) { error = (e as DozeForgeError).message; }
+    finally { motionBusy = false; }
+  }
+
+  async function applyHeartbeat() {
+    if (!deviceStore.selected) return;
+    heartbeatBusy = true; error = null; success = null;
+    try {
+      await api.tuneGmsHeartbeat(deviceStore.selected.serial, heartbeatInterval);
+      success = `GMS heartbeat interval set to ${Math.round(heartbeatInterval / 60000)} minutes.`;
+    } catch (e) { error = (e as DozeForgeError).message; }
+    finally { heartbeatBusy = false; }
   }
 
   async function simulateUnplug() {
@@ -209,14 +236,13 @@
 
 <header class="page-head">
   <div>
-    <h1>Sleep Analyzer</h1>
+    <h1>{i18n.t('Sleep Analyzer')}</h1>
     <p class="muted">
-      Why the device is not sleeping when the screen is off. Three layers:
-      global timeline, per-app culprits, and (optionally) kernel-level wakelocks.
+      {i18n.t('Why the device is not sleeping when the screen is off. Three layers: global timeline, per-app culprits, and (optionally) kernel-level wakelocks.')}
     </p>
   </div>
   <button class="primary" onclick={analyze} disabled={loading || !deviceStore.selected}>
-    {loading ? 'Analyzing…' : 'Re-analyze'}
+    {loading ? i18n.t('Analyzing…') : i18n.t('Re-analyze')}
   </button>
 </header>
 
@@ -231,10 +257,9 @@
   <div class="card" style="margin-bottom: 1rem;">
     <div class="row" style="justify-content: space-between; align-items: flex-end; margin-bottom: 0.75rem;">
       <div>
-        <h3 style="margin: 0 0 0.25rem 0;">Sleep efficiency timeline</h3>
+        <h3 style="margin: 0 0 0.25rem 0;">{i18n.t('Sleep efficiency timeline')}</h3>
         <p class="muted footnote" style="margin: 0;">
-          Hours the screen was off vs. how much of that time the CPU actually slept.
-          Awake-with-screen-off is the leak you can fix.
+          {i18n.t('Hours the screen was off vs. how much of that time the CPU actually slept. Awake-with-screen-off is the leak you can fix.')}
         </p>
       </div>
       {#if timeline}
@@ -246,13 +271,13 @@
     </div>
 
     {#if !timeline}
-      {#if loading}<Skeleton lines={4} />{:else}<p class="muted">Timeline not available — device may not have been on battery long enough.</p>{/if}
+      {#if loading}<Skeleton lines={4} />{:else}<p class="muted">{i18n.t('Timeline not available — device may not have been on battery long enough.')}</p>{/if}
     {:else}
       {@const base = Math.max(timeline.on_battery_realtime_ms, timeline.screen_off_realtime_ms, 1)}
       <div class="timeline">
         <!-- Screen off realtime -->
         <div class="tl-row">
-          <span class="tl-label" title="Wall-clock hours the screen was off, while on battery.">Screen off</span>
+          <span class="tl-label" title="Wall-clock hours the screen was off, while on battery.">{i18n.t('Screen off')}</span>
           <div class="tl-bar-wrap">
             <div class="tl-bar tl-screen-off" style="width: {pctOf(timeline.screen_off_realtime_ms, base)}%"></div>
           </div>
@@ -260,7 +285,7 @@
         </div>
         <!-- Deep sleep -->
         <div class="tl-row">
-          <span class="tl-label" title="Time the CPU was actually suspended with screen off. Higher is better.">Deep sleep</span>
+          <span class="tl-label" title="Time the CPU was actually suspended with screen off. Higher is better.">{i18n.t('Deep sleep')}</span>
           <div class="tl-bar-wrap">
             <div class="tl-bar tl-deep" style="width: {pctOf(timeline.deep_sleep_ms, base)}%"></div>
           </div>
@@ -268,7 +293,7 @@
         </div>
         <!-- Awake (the leak) -->
         <div class="tl-row">
-          <span class="tl-label" title="Screen was off, but the CPU stayed awake. Every minute here drains battery.">Awake (screen off)</span>
+          <span class="tl-label" title="Screen was off, but the CPU stayed awake. Every minute here drains battery.">{i18n.t('Awake (screen off)')}</span>
           <div class="tl-bar-wrap">
             <div class="tl-bar tl-awake" style="width: {pctOf(timeline.screen_off_uptime_ms, base)}%"></div>
           </div>
@@ -293,12 +318,12 @@
           <div class="score-number" data-tier={score.tier}>{score.score}</div>
           <div class="score-meta">
             <div class="score-tier" data-tier={score.tier}>{score.tier}</div>
-            <div class="muted">out of 100</div>
+            <div class="muted">{i18n.t('out of 100')}</div>
           </div>
         </div>
         <div class="penalties">
           {#if score.penalties.length === 0}
-            <p class="muted">No penalties — device sleeps well.</p>
+            <p class="muted">{i18n.t('No penalties — device sleeps well.')}</p>
           {:else}
             {#each score.penalties as p, i (i)}
               <div class="penalty">
@@ -312,25 +337,25 @@
     </div>
 
     <div class="card">
-      <h3>Miscategorized apps</h3>
+      <h3>{i18n.t('Miscategorized apps')}</h3>
       <p class="muted footnote">
-        Android keeps these in privileged buckets, but you have not used them recently.
+        {i18n.t('Android keeps these in privileged buckets, but you have not used them recently.')}
       </p>
       {#if loading}
         <Skeleton lines={4} />
       {:else if misc.length === 0}
-        <p class="muted">None detected — buckets are well calibrated.</p>
+        <p class="muted">{i18n.t('None detected — buckets are well calibrated.')}</p>
       {:else}
         <div class="scroll-y" style="max-height: 230px;">
           <table>
-            <thead><tr><th>Package</th><th>Current</th><th>Suggest</th><th></th></tr></thead>
+            <thead><tr><th>{i18n.t('Package')}</th><th>{i18n.t('Current')}</th><th>{i18n.t('Suggest')}</th><th></th></tr></thead>
             <tbody>
               {#each misc.slice(0, 12) as m (m.package)}
                 <tr class="app-row" onclick={() => gotoActions(m.package)} style="cursor: pointer;" title="Open optimization options">
                   <td><AppName package={m.package} size="sm" hidePackage inline /></td>
-                  <td><span class="badge moderate">{m.current_bucket}</span></td>
-                  <td><span class="badge ok">{m.recommended_bucket}</span></td>
-                  <td><button onclick={() => gotoActions(m.package)}>Fix</button></td>
+                  <td><span class="badge moderate">{i18n.t(m.current_bucket)}</span></td>
+                  <td><span class="badge ok">{i18n.t(m.recommended_bucket)}</span></td>
+                  <td><button onclick={() => gotoActions(m.package)}>{i18n.t('Fix')}</button></td>
                 </tr>
               {/each}
             </tbody>
@@ -348,12 +373,12 @@
       <div class="card" style="grid-column: 1 / -1; padding: 1.25rem;">
         <div class="row" style="justify-content: space-between; align-items: flex-start; margin-bottom: 1rem;">
           <div>
-            <h3 style="margin: 0 0 0.5rem;">Doze State Machine</h3>
+            <h3 style="margin: 0 0 0.5rem;">{i18n.t('Doze State Machine')}</h3>
             <p class="muted small" style="margin: 0;">
-              Real-time state of the device idle controller. The device must pass through sensing phases before deep sleep.
+              {i18n.t('Real-time state of the device idle controller. The device must pass through sensing phases before deep sleep.')}
             </p>
           </div>
-          <button class="secondary" onclick={simulateUnplug} disabled={loading} title="Engaña al sistema haciendo creer que no está conectado al USB">Simular batería</button>
+          <button class="secondary" onclick={simulateUnplug} disabled={loading} title="Engaña al sistema haciendo creer que no está conectado al USB">{i18n.t('Simular batería')}</button>
         </div>
         
         <div class="state-machine">
@@ -369,7 +394,7 @@
         </div>
         {#if dozeState.next_alarm_elapsed}
           <p class="muted small" style="margin: 1rem 0 0; text-align: center;">
-            Next alarm/transition in: <strong class="mono">{dozeState.next_alarm_elapsed}</strong>
+            {i18n.t('Next alarm/transition in:')} <strong class="mono">{dozeState.next_alarm_elapsed}</strong>
           </p>
         {/if}
       </div>
@@ -400,6 +425,36 @@
           disabled={perfBusy}
         >
           {perfBusy ? '…' : ((perfSettings.wifi_scan_always_enabled || perfSettings.ble_scan_always_enabled) ? 'Disable Background Scan' : 'Re-enable Background Scan')}
+        </button>
+      </div>
+      <div class="card" style="padding: 1.25rem;">
+        <h3 style="margin: 0 0 0.75rem;">Motion Sensor Override</h3>
+        <p class="muted small" style="margin: 0 0 0.85rem;">
+          Prevents motion detection from waking the device during Doze. Inspired by Naptime.
+          The device will enter deep sleep even while in your pocket or bag.
+        </p>
+        <button
+          class={motionDisabled ? 'danger' : 'primary'}
+          onclick={toggleDozeMotion}
+          disabled={motionBusy}
+        >
+          {motionBusy ? '...' : (motionDisabled ? 'Restore Motion Detection' : 'Disable Motion in Doze')}
+        </button>
+      </div>
+      <div class="card" style="padding: 1.25rem;">
+        <h3 style="margin: 0 0 0.75rem;">GMS Heartbeat Interval</h3>
+        <p class="muted small" style="margin: 0 0 0.85rem;">
+          Controls how often Google Play Services wakes the device for Firebase Cloud Messaging.
+          Higher intervals save battery but may delay push notifications.
+        </p>
+        <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.85rem;">
+          <button class="outline" class:active={heartbeatInterval === 300000} onclick={() => heartbeatInterval = 300000}>5 min</button>
+          <button class="outline" class:active={heartbeatInterval === 900000} onclick={() => heartbeatInterval = 900000}>15 min (default)</button>
+          <button class="outline" class:active={heartbeatInterval === 1800000} onclick={() => heartbeatInterval = 1800000}>30 min</button>
+          <button class="outline" class:active={heartbeatInterval === 3600000} onclick={() => heartbeatInterval = 3600000}>60 min</button>
+        </div>
+        <button class="primary" onclick={applyHeartbeat} disabled={heartbeatBusy}>
+          {heartbeatBusy ? '...' : 'Apply Heartbeat Interval'}
         </button>
       </div>
     {/if}
@@ -544,13 +599,13 @@
           biggest single drain you can fix.
         </p>
         {#if wakeup.doze_whitelist.user_whitelisted.length === 0}
-          <p class="muted">Clean — no user-whitelisted apps bypassing Doze.</p>
+          <p class="muted">{i18n.t('Clean — no user-whitelisted apps bypassing Doze.')}</p>
         {:else}
           <ul class="ul-list">
             {#each wakeup.doze_whitelist.user_whitelisted as pkg (pkg)}
               <li>
                 <AppName package={pkg} size="sm" hidePackage inline />
-                <button onclick={() => removeWhitelist(pkg)}>Remove</button>
+                <button onclick={() => removeWhitelist(pkg)}>{i18n.t('Remove')}</button>
               </li>
             {/each}
           </ul>
@@ -558,12 +613,12 @@
       </div>
 
       <div class="card">
-        <h3>Currently held wakelocks</h3>
+        <h3>{i18n.t('Currently held wakelocks')}</h3>
         <p class="muted footnote">
-          Wakelocks active at the moment of analysis. Empty here is a good sign.
+          {i18n.t('Wakelocks active at the moment of analysis. Empty here is a good sign.')}
         </p>
         {#if wakeup.live_wakelocks.length === 0}
-          <p class="muted">None right now — good sign.</p>
+          <p class="muted">{i18n.t('None right now — good sign.')}</p>
         {:else}
           <ul class="ul-list">
             {#each wakeup.live_wakelocks as wl, i (i)}
@@ -585,22 +640,19 @@
   <div class="card" style="margin-top: 1rem;">
     <button class="toggle-advanced" onclick={() => (showAdvanced = !showAdvanced)}>
       <span>{showAdvanced ? '▾' : '▸'}</span>
-      Advanced — Kernel wakelocks ({kernelWl.length})
+      {i18n.t('Advanced — Kernel wakelocks')} ({kernelWl.length})
     </button>
     {#if showAdvanced}
       <p class="muted footnote" style="margin: 0.75rem 0;">
-        Hardware-level wakelocks held by drivers (Wi-Fi, modem, NFC, display).
-        These are invisible to per-app restrictions: if your worst row here is
-        <code class="mono">wlan_rx_wake</code>, restricting Spotify will not help —
-        the fix is in your router or carrier signal.
+        {i18n.t('Hardware-level wakelocks held by drivers (Wi-Fi, modem, NFC, display). These are invisible to per-app restrictions: if your worst row here is wlan_rx_wake, restricting Spotify will not help — the fix is in your router or carrier signal.')}
       </p>
       {#if kernelWl.length === 0}
         <div class="card flat info-banner" style="margin-top: 0.75rem; display: flex; align-items: center; justify-content: center; min-height: 120px; text-align: center;">
           <div>
             <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--fg-2)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom: 0.5rem;"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
-            <p style="margin: 0; color: var(--fg-1); font-weight: 500;">No Kernel Wakelocks Detected</p>
+            <p style="margin: 0; color: var(--fg-1); font-weight: 500;">{i18n.t('No Kernel Wakelocks Detected')}</p>
             <p class="muted small" style="margin: 0.25rem 0 0; max-width: 400px;">
-              Either the device hasn't been off-charger long enough, or this kernel doesn't expose standard wakelocks via dumpsys.
+              {i18n.t("Either the device hasn't been off-charger long enough, or this kernel doesn't expose standard wakelocks via dumpsys.")}
             </p>
           </div>
         </div>
@@ -609,11 +661,11 @@
           <table>
             <thead>
               <tr>
-                <th>Name</th>
-                <th>Total held</th>
-                <th>Count</th>
-                <th>Severity</th>
-                <th>What it usually means</th>
+                <th>{i18n.t('Name')}</th>
+                <th>{i18n.t('Total held')}</th>
+                <th>{i18n.t('Count')}</th>
+                <th>{i18n.t('Severity')}</th>
+                <th>{i18n.t('What it usually means')}</th>
               </tr>
             </thead>
             <tbody>
@@ -639,20 +691,20 @@
   {#if wakeup}
     <div class="grid two-grid" style="margin-top: 1rem;">
       <div class="card">
-        <h3>Pending Alarms</h3>
+        <h3>{i18n.t('Pending Alarms')}</h3>
         <p class="muted footnote">
-          Apps that have scheduled alarms to wake the device.
+          {i18n.t('Apps that have scheduled alarms to wake the device.')}
         </p>
         {#if wakeup.alarms.length === 0}
-          <p class="muted">No pending alarms found.</p>
+          <p class="muted">{i18n.t('No pending alarms found.')}</p>
         {:else}
           <div class="scroll-y" style="max-height: 380px;">
             <table>
               <thead>
                 <tr>
-                  <th>Application</th>
-                  <th>Wake Type</th>
-                  <th>Count</th>
+                  <th>{i18n.t('Application')}</th>
+                  <th>{i18n.t('Wake Type')}</th>
+                  <th>{i18n.t('Count')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -670,20 +722,20 @@
       </div>
 
       <div class="card">
-        <h3>Pending Jobs</h3>
+        <h3>{i18n.t('Pending Jobs')}</h3>
         <p class="muted footnote">
-          Apps with background tasks scheduled in the JobScheduler.
+          {i18n.t('Apps with background tasks scheduled in the JobScheduler.')}
         </p>
         {#if wakeup.jobs.length === 0}
-          <p class="muted">No pending jobs found.</p>
+          <p class="muted">{i18n.t('No pending jobs found.')}</p>
         {:else}
           <div class="scroll-y" style="max-height: 380px;">
             <table>
               <thead>
                 <tr>
-                  <th>Application</th>
-                  <th>Total Jobs</th>
-                  <th>Periodic</th>
+                  <th>{i18n.t('Application')}</th>
+                  <th>{i18n.t('Total Jobs')}</th>
+                  <th>{i18n.t('Periodic')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -845,18 +897,11 @@
 
   .info-banner {
     padding: 0.85rem 1.15rem;
-    border-color: rgba(56, 189, 248, 0.2);
-    background: rgba(56, 189, 248, 0.04);
+    border-color: rgba(255, 107, 0, 0.2);
+    background: rgba(255, 107, 0, 0.04);
   }
   .info-banner p { margin: 0 0 0.5rem; font-size: var(--font-size-sm); color: var(--fg-1); }
   .info-banner p:last-child { margin-bottom: 0; }
-  .info-banner ul {
-    margin: 0.4rem 0 0.6rem 1.25rem;
-    padding: 0;
-    font-size: var(--font-size-sm);
-    color: var(--fg-2);
-    line-height: 1.6;
-  }
 
   /* ---------- State Machine ---------- */
   .state-machine {

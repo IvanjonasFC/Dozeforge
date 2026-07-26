@@ -3,8 +3,10 @@
   import { api, DozeForgeError } from '$tauri/api';
   import { deviceStore } from '$stores/device.svelte';
   import { cache, TTL } from '$stores/cache.svelte';
+  import { i18n } from '$stores/i18n.svelte';
   import Skeleton from '$components/Skeleton.svelte';
   import AppName from '$components/AppName.svelte';
+  import { appModalStore } from '$stores/appModal.svelte';
   import type { PackageSize, StorageOverview, CompileMode } from '$types';
 
   type Tab = 'overview' | 'inventory' | 'optimize' | 'compile';
@@ -60,6 +62,9 @@
   let success: string | null = $state(null);
   let topAppsArt: Record<string, string> | null = $state(null);
   let analyzingArt = $state(false);
+  let fstrimBusy = $state(false);
+  let orphanBusy = $state(false);
+  let orphanResult = $state<string | null>(null);
 
   async function analyzeArtStatus() {
     if (!deviceStore.selected) return;
@@ -93,6 +98,26 @@
       await refreshOverview(true);
     } catch (e) { error = (e as DozeForgeError).message; }
     finally { busy = false; }
+  }
+
+  async function doFstrim() {
+    if (!deviceStore.selected) return;
+    fstrimBusy = true; error = null; success = null;
+    try {
+      await api.runFstrim(deviceStore.selected.serial);
+      success = 'FSTRIM completed successfully. Flash storage blocks have been reclaimed.';
+    } catch (e) { error = (e as DozeForgeError).message; }
+    finally { fstrimBusy = false; }
+  }
+
+  async function doOrphanClean() {
+    if (!deviceStore.selected) return;
+    orphanBusy = true; error = null; success = null;
+    try {
+      orphanResult = await api.cleanOrphanedData(deviceStore.selected.serial);
+      success = orphanResult;
+    } catch (e) { error = (e as DozeForgeError).message; }
+    finally { orphanBusy = false; }
   }
 
   // Inventory controls
@@ -276,28 +301,26 @@
 
 <header class="page-head">
   <div>
-    <h1>Storage</h1>
+    <h1>{i18n.t('Storage')}</h1>
     <p class="muted">
-      Disk inventory, cache trimming, and ART recompilation.
-      Without root, app data and per-app cache sizes are not readable —
-      what you see here is APK code size + system-level cache stats.
+      {i18n.t('Disk inventory, cache trimming, and ART recompilation. Without root, app data and per-app cache sizes are not readable — what you see here is APK code size + system-level cache stats.')}
     </p>
   </div>
   <button class="primary" onclick={() => refreshOverview(true)} disabled={loading || !deviceStore.selected}>
-    {loading ? 'Reading…' : 'Refresh'}
+    {loading ? i18n.t('Reading…') : i18n.t('Refresh')}
   </button>
 </header>
 
 {#if !deviceStore.selected}
-  <div class="card empty"><p class="muted">No device connected.</p></div>
+  <div class="card empty"><p class="muted">{i18n.t('No device connected.')}</p></div>
 {:else}
   <div class="seg" role="tablist">
-    <button class:active={tab === 'overview'}  onclick={() => tab = 'overview'}  role="tab">Overview</button>
+    <button class:active={tab === 'overview'}  onclick={() => tab = 'overview'}  role="tab">{i18n.t('Overview')}</button>
     <button class:active={tab === 'inventory'} onclick={() => tab = 'inventory'} role="tab">
-      Inventory <span class="seg-count">{inventory.length || '–'}</span>
+      {i18n.t('Inventory')} <span class="seg-count">{inventory.length || '–'}</span>
     </button>
-    <button class:active={tab === 'optimize'}  onclick={() => tab = 'optimize'}  role="tab">Optimize</button>
-    <button class:active={tab === 'compile'}   onclick={() => tab = 'compile'}  role="tab">Compile</button>
+    <button class:active={tab === 'optimize'}  onclick={() => tab = 'optimize'}  role="tab">{i18n.t('Optimize')}</button>
+    <button class:active={tab === 'compile'}   onclick={() => tab = 'compile'}  role="tab">{i18n.t('Compile')}</button>
   </div>
 
   {#if error}<div class="error">{error}</div>{/if}
@@ -310,20 +333,20 @@
     {:else}
       {#if dataUsedPct !== null && dataUsedPct >= 90}
         <div class="card flat banner" style="background: rgba(239, 68, 68, 0.1); border-color: var(--bad); margin-bottom: 1rem;">
-          <p style="color: var(--bad);"><strong>Critical:</strong> Storage is almost full (>90%). Risk of app failures. Please free up space immediately.</p>
+          <p style="color: var(--bad);">{i18n.t('Critical: Storage is almost full (>90%). Risk of app failures. Please free up space immediately.')}</p>
         </div>
       {:else if dataUsedPct !== null && dataUsedPct >= 85}
         <div class="card flat banner" style="background: rgba(245, 158, 11, 0.1); border-color: var(--warn); margin-bottom: 1rem;">
-          <p style="color: var(--warn);"><strong>Warning:</strong> Storage usage is high (>85%). Performance may degrade. Consider running Smart Clean.</p>
+          <p style="color: var(--warn);">{i18n.t('Warning: Storage usage is high (>85%). Performance may degrade. Consider running Smart Clean.')}</p>
         </div>
       {/if}
 
       <div class="grid two-grid">
         <!-- Data partition -->
         <div class="card big-card">
-          <div class="card-label">Data partition</div>
+          <div class="card-label">{i18n.t('Data partition')}</div>
           <div class="big-value mono">
-            {fmtBytes(overview.diskstats.data_free_bytes)} <span class="muted unit">free</span>
+            {fmtBytes(overview.diskstats.data_free_bytes)} <span class="muted unit">{i18n.t('free')}</span>
           </div>
           <div class="bar">
             <div class="bar-fill" style="width: {dataUsedPct ?? 0}%; background: {storageColor(dataUsedPct)};"></div>
@@ -331,34 +354,34 @@
           <div class="meta-row">
             <span>
               <strong class="mono">{fmtBytes(overview.diskstats.data_total_bytes)}</strong>
-              <span class="muted">total</span>
+              <span class="muted">{i18n.t('total')}</span>
             </span>
             {#if dataUsedPct !== null}
-              <span class="muted">{dataUsedPct}% used</span>
+              <span class="muted">{dataUsedPct}% {i18n.t('used')}</span>
             {/if}
           </div>
         </div>
 
         <!-- System cache -->
         <div class="card big-card">
-          <div class="card-label">System cache</div>
+          <div class="card-label">{i18n.t('System cache')}</div>
           {#if overview.diskstats.cache_total_bytes !== null}
             <div class="big-value mono">
               {fmtBytes(overview.diskstats.cache_total_bytes)}
             </div>
             <p class="muted small">
-              Free: <span class="mono">{fmtBytes(overview.diskstats.cache_free_bytes)}</span>
+              {i18n.t('Free:')} <span class="mono">{fmtBytes(overview.diskstats.cache_free_bytes)}</span>
             </p>
           {:else}
             <div class="big-value mono" style="color: var(--fg-3);">N/A</div>
-            <p class="muted small">Partition not available on this device.</p>
+            <p class="muted small">{i18n.t('Partition not available on this device.')}</p>
           {/if}
         </div>
       </div>
 
       <div class="grid two-grid" style="margin-top: 0.85rem;">
         <div class="card stat-tile">
-          <div class="stat-label">Recent write speed</div>
+          <div class="stat-label">{i18n.t('Recent write speed')}</div>
           {#if overview.diskstats.recent_write_speed_kb_s !== null}
             <div class="stat-val mono">
               {(overview.diskstats.recent_write_speed_kb_s / 1024).toFixed(1)}
@@ -367,27 +390,27 @@
           {:else}
             <div class="stat-val muted">—</div>
           {/if}
-          <p class="muted small">Reported by Android diskstats benchmark.</p>
+          <p class="muted small">{i18n.t('Reported by Android diskstats benchmark.')}</p>
         </div>
 
         <div class="card stat-tile">
-          <div class="stat-label">Encryption</div>
+          <div class="stat-label">{i18n.t('Encryption')}</div>
           {#if overview.diskstats.file_based_encryption === true}
-            <span class="badge ok">FBE enabled</span>
+            <span class="badge ok">{i18n.t('FBE enabled')}</span>
           {:else if overview.diskstats.file_based_encryption === false}
-            <span class="badge moderate">FBE disabled</span>
+            <span class="badge moderate">{i18n.t('FBE disabled')}</span>
           {:else}
             <span class="muted">—</span>
           {/if}
-          <p class="muted small">File-Based Encryption (Android 7+).</p>
+          <p class="muted small">{i18n.t('File-Based Encryption (Android 7+).')}</p>
         </div>
 
         <div class="card stat-tile" style="grid-column: 1 / -1; display: flex; justify-content: space-between; align-items: center;">
           <div>
-            <div class="stat-label" style="margin-bottom: 0.2rem;">Temporary Files</div>
-            <p class="muted small" style="margin:0;">Clear old ADB sideloads and temporary system files from /data/local/tmp.</p>
+            <div class="stat-label" style="margin-bottom: 0.2rem;">{i18n.t('Temporary Files')}</div>
+            <p class="muted small" style="margin:0;">{i18n.t('Clear old ADB sideloads and temporary system files from /data/local/tmp.')}</p>
           </div>
-          <button class="secondary" onclick={clearTempFiles} disabled={busy}>Clean Temp Files</button>
+          <button class="secondary" onclick={clearTempFiles} disabled={busy}>{i18n.t('Clean Temp Files')}</button>
         </div>
       </div>
     {/if}
@@ -396,22 +419,22 @@
   {:else if tab === 'inventory'}
     <div class="card flat banner">
       <p>
-        Select applications from the list to clear their cache safely. Cache and user data are not accessible without root, so sizes shown are base installation files only.
+        {i18n.t('Select applications from the list to clear their cache safely. Cache and user data are not accessible without root, so sizes shown are base installation files only.')}
       </p>
     </div>
 
     <div class="card filter-bar">
       <input
         type="search"
-        placeholder="Search apps..."
+        placeholder={i18n.t('Search apps...')}
         bind:value={invFilter}
       />
       <div class="filter-actions">
         <button onclick={forceRescanInventory} disabled={loadingInventory}>
-          {loadingInventory ? 'Scanning…' : 'Refresh List'}
+          {loadingInventory ? i18n.t('Scanning…') : i18n.t('Refresh List')}
         </button>
         <button onclick={clearSelection} disabled={selected.size === 0}>
-          Clear ({selected.size})
+          {i18n.t('Clear')} ({selected.size})
         </button>
       </div>
     </div>
@@ -421,7 +444,7 @@
         <Skeleton lines={10} />
       </div>
     {:else if inventory.length === 0}
-      <div class="card empty"><p class="muted">No apps found.</p></div>
+      <div class="card empty"><p class="muted">{i18n.t('No apps found.')}</p></div>
     {:else}
       <div class="card table-card">
         <div class="scroll-y" style="max-height: 55vh;">
@@ -429,14 +452,14 @@
             <thead>
               <tr>
                 <th style="width: 30px;"></th>
-                <th>Application Name</th>
-                <th style="text-align: right;">Network Data</th>
-                <th style="text-align: right;">App Size</th>
+                <th>{i18n.t('Application Name')}</th>
+                <th style="text-align: right;">{i18n.t('Network Data')}</th>
+                <th style="text-align: right;">{i18n.t('App Size')}</th>
               </tr>
             </thead>
             <tbody>
               {#each visibleInventory as p (p.package)}
-                <tr class:selected={selected.has(p.package)} onclick={() => toggle(p.package)}>
+                <tr class:selected={selected.has(p.package)} onclick={() => appModalStore.open(p.package)}>
                   <td>
                     <input
                       type="checkbox"
@@ -462,21 +485,21 @@
         </div>
         {#if inventory.length > visibleInventory.length}
           <p class="muted footnote">
-            Showing {visibleInventory.length} of {inventory.length} installed applications.
+            {i18n.t('Showing')} {visibleInventory.length} {i18n.t('of')} {inventory.length} {i18n.t('installed applications.')}
           </p>
         {/if}
       </div>
 
       <div class="action-bar" class:active={selected.size > 0}>
-        <span class="muted">{selected.size > 0 ? `${selected.size} selected` : 'Smart Clean'}</span>
+        <span class="muted">{selected.size > 0 ? `${selected.size} ${i18n.t('selected')}` : i18n.t('Smart Clean')}</span>
         <div class="action-buttons">
           {#if selected.size === 0}
             <button class="primary" onclick={smartClean} disabled={busy}>
-              {busy ? 'Cleaning…' : 'Smart Clean (All)'}
+              {busy ? i18n.t('Cleaning…') : i18n.t('Smart Clean (All)')}
             </button>
           {:else}
             <button class="primary" onclick={clearCacheSelected} disabled={busy}>
-              {busy ? 'Processing…' : `Clear Cache (${selected.size})`}
+              {busy ? i18n.t('Processing…') : `${i18n.t('Clear Cache')} (${selected.size})`}
             </button>
           {/if}
         </div>
@@ -487,15 +510,14 @@
   {:else if tab === 'optimize'}
     <!-- Trim caches -->
     <div class="card">
-      <h3>Trim system caches</h3>
+      <h3>{i18n.t('Trim system caches')}</h3>
       <p class="muted">
-        Asks Android to free up cache from all apps until at least
-        <strong>N&nbsp;GB</strong> are available on <code>/data</code>. The system
-        decides which apps to trim — non-destructive, no user data is touched.
+        {i18n.t('Asks Android to free up cache from all apps until at least')}
+        <strong>N&nbsp;GB</strong> {i18n.t('are available on /data. The system decides which apps to trim — non-destructive, no user data is touched.')}
       </p>
       <div class="trim-controls">
         <label class="trim-target">
-          Target free space:
+          {i18n.t('Target free space:')}
           <input
             type="range"
             min="1"
@@ -506,7 +528,7 @@
           <strong class="mono trim-val">{trimTargetGb} GB</strong>
         </label>
         <button class="primary" onclick={trimGlobal} disabled={busy}>
-          {busy ? 'Trimming…' : 'Trim now'}
+          {busy ? i18n.t('Trimming…') : i18n.t('Trim now')}
         </button>
       </div>
     </div>
@@ -515,47 +537,65 @@
     <div class="card destructive" style="margin-top: 1rem;">
       <h3>
         <svg class="warn-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-        Recompile ART (background dexopt)
+        {i18n.t('Recompile ART (background dexopt)')}
       </h3>
       <p>
-        Triggers <code>cmd package bg-dexopt-job</code>. Forces Android to
-        recompile installed apps from DEX bytecode to AOT machine code.
-        Improves app launch latency after OTA updates or major Play Store updates.
+        {i18n.t('Triggers cmd package bg-dexopt-job. Forces Android to recompile installed apps from DEX bytecode to AOT machine code. Improves app launch latency after OTA updates or major Play Store updates.')}
       </p>
       <ul class="caveats">
-        <li><strong>Duration:</strong> 30-45 min of continuous high CPU use.</li>
-        <li><strong>Thermal:</strong> Device will get warm — possible throttle.</li>
-        <li><strong>Battery:</strong> Drains 15-25% of charge during the job.</li>
-        <li><strong>Recommendation:</strong> Run only while device is charging and on a cool surface. <em>Do not</em> run it monthly — Android already does it when idle.</li>
+        <li><strong>{i18n.t('Duration:')}</strong> {i18n.t('30-45 min of continuous high CPU use.')}</li>
+        <li><strong>{i18n.t('Thermal:')}</strong> {i18n.t('Device will get warm — possible throttle.')}</li>
+        <li><strong>{i18n.t('Battery:')}</strong> {i18n.t('Drains 15-25% of charge during the job.')}</li>
+        <li><strong>{i18n.t('Recommendation:')}</strong> {i18n.t('Run only while device is charging and on a cool surface. Do not run it monthly — Android already does it when idle.')}</li>
       </ul>
       <label class="confirm-checkbox">
         <input type="checkbox" bind:checked={dexoptConfirmed} />
-        I understand and the device is plugged in.
+        {i18n.t('I understand and the device is plugged in.')}
       </label>
       <button class="danger" onclick={runDexopt} disabled={busy || !dexoptConfirmed}>
-        {busy ? 'Started…' : 'Run dexopt job'}
+        {busy ? i18n.t('Started…') : i18n.t('Run dexopt job')}
       </button>
+    </div>
+
+    <h2 style="margin-top: 2rem; margin-bottom: 0.75rem;">{i18n.t('Storage Maintenance')}</h2>
+    <div class="grid two-grid">
+      <div class="card" style="padding: 1.25rem;">
+        <h3 style="margin: 0 0 0.5rem;">{i18n.t('FSTRIM (Flash Optimization)')}</h3>
+        <p class="muted small" style="margin: 0 0 0.85rem;">
+          {i18n.t('Forces the storage controller to reclaim deleted blocks on the UFS/eMMC chip. Over time, this restores read/write speeds to near-factory levels. Safe to run on any device.')}
+        </p>
+        <button class="primary" onclick={doFstrim} disabled={fstrimBusy}>
+          {fstrimBusy ? i18n.t('Running FSTRIM...') : i18n.t('Run FSTRIM')}
+        </button>
+      </div>
+      <div class="card" style="padding: 1.25rem;">
+        <h3 style="margin: 0 0 0.5rem;">{i18n.t('Orphaned Data Cleaner')}</h3>
+        <p class="muted small" style="margin: 0 0 0.85rem;">
+          {i18n.t('Scans /data/data/ for leftover directories from uninstalled apps and removes them. Reclaims wasted space that Android does not clean automatically. Requires root access.')}
+        </p>
+        <button class="primary" onclick={doOrphanClean} disabled={orphanBusy}>
+          {orphanBusy ? i18n.t('Scanning...') : i18n.t('Clean Orphaned Data')}
+        </button>
+      </div>
     </div>
 
   <!-- ===== COMPILE TAB (Block H 2.2 + 2.3) ===== -->
   {:else if tab === 'compile'}
     <div class="card flat banner">
       <p>
-        <strong>AOT compilation per app.</strong>
-        <code>speed</code> = full ahead-of-time compilation for fastest launch
-        (large disk cost). <code>--reset</code> wipes the AOT cache so the app
-        recompiles on next launch.
+        <strong>{i18n.t('AOT compilation per app.')}</strong>
+        {i18n.t('speed = full ahead-of-time compilation for fastest launch (large disk cost). --reset wipes the AOT cache so the app recompiles on next launch.')}
       </p>
     </div>
 
     <div class="card" style="margin-bottom: 1rem;">
       <div style="display: flex; justify-content: space-between; align-items: center;">
         <div>
-          <h3 style="margin: 0 0 0.5rem;">Intelligent ART Analyzer</h3>
-          <p class="muted small" style="margin: 0;">Scan your Top 20 largest apps to see if they need compilation.</p>
+          <h3 style="margin: 0 0 0.5rem;">{i18n.t('Intelligent ART Analyzer')}</h3>
+          <p class="muted small" style="margin: 0;">{i18n.t('Scan your Top 20 largest apps to see if they need compilation.')}</p>
         </div>
         <button class="secondary" onclick={analyzeArtStatus} disabled={analyzingArt || inventory.length === 0}>
-          {analyzingArt ? 'Scanning…' : 'Analyze Top Apps'}
+          {analyzingArt ? i18n.t('Scanning…') : i18n.t('Analyze Top Apps')}
         </button>
       </div>
 
@@ -581,10 +621,9 @@
     </div>
 
     <div class="card">
-      <h3>Target package</h3>
+      <h3>{i18n.t('Target package')}</h3>
       <p class="muted small">
-        Use exact package name (e.g. <code class="mono">com.spotify.music</code>).
-        Find it in the Bloatware tab if you don't know it.
+        {i18n.t("Use exact package name (e.g. com.spotify.music). Find it in the Bloatware tab if you don't know it.")}
       </p>
       <input
         type="text"
@@ -595,7 +634,7 @@
         style="margin-top: 0.5rem;"
       />
 
-      <h3 style="margin-top: 1.25rem;">Compile mode</h3>
+      <h3 style="margin-top: 1.25rem;">{i18n.t('Compile mode')}</h3>
       <select bind:value={compileMode} style="max-width: 380px;">
         {#each COMPILE_MODES as m (m.value)}
           <option value={m.value}>{m.label} — {m.desc}</option>
@@ -611,19 +650,16 @@
           onclick={runCompile}
           disabled={compileBusy || !compileTarget.trim()}
         >
-          {compileBusy ? 'Compiling… (up to 5 min)' : `Compile (${compileMode})`}
+          {compileBusy ? i18n.t('Compiling… (up to 5 min)') : `${i18n.t('Compile')} (${compileMode})`}
         </button>
-        <span class="muted small">↑ this can take 30s to 5 min depending on app size</span>
+        <span class="muted small">↑ {i18n.t('this can take 30s to 5 min depending on app size')}</span>
       </div>
     </div>
 
     <div class="card" style="margin-top: 1rem;">
-      <h3>Reset compilation cache</h3>
+      <h3>{i18n.t('Reset compilation cache')}</h3>
       <p class="muted">
-        Wipes the AOT compilation for the target package above. The app will
-        recompile from scratch when next opened — first launch may be slow
-        but subsequent ones return to normal. Use this when an app starts
-        stuttering after a system update.
+        {i18n.t('Wipes the AOT compilation for the target package above. The app will recompile from scratch when next opened — first launch may be slow but subsequent ones return to normal. Use this when an app starts stuttering after a system update.')}
       </p>
       <button
         class="warn"
@@ -631,7 +667,7 @@
         disabled={compileBusy || !compileTarget.trim()}
         style="margin-top: 0.5rem;"
       >
-        {compileBusy ? '…' : `↻ Reset compilation for ${compileTarget.trim() || '(pick app above)'}`}
+        {compileBusy ? '…' : `↻ ${i18n.t('Reset compilation for')} ${compileTarget.trim() || i18n.t('(pick app above)')}`}
       </button>
     </div>
   {/if}
@@ -652,7 +688,7 @@
     display: inline-flex;
     gap: 2px;
     padding: 3px;
-    background: var(--bg-2);
+    background: var(--control-bg);
     border: 1px solid var(--border);
     border-radius: 99px;
     margin-bottom: 1rem;
@@ -682,7 +718,7 @@
     border-radius: 99px;
     font-family: var(--font-mono);
   }
-  .seg button.active .seg-count { background: var(--accent); color: #00131C; }
+  .seg button.active .seg-count { background: var(--accent); color: var(--on-accent); }
 
   .success {
     padding: 0.65rem 1rem;
@@ -706,13 +742,14 @@
     font-weight: 600;
   }
   .big-value {
+    font-family: var(--font-display);
     font-size: 32px;
-    font-weight: 700;
+    font-weight: 600;
     color: var(--fg-0);
     letter-spacing: -0.025em;
     line-height: 1.1;
   }
-  .big-value .unit { font-size: 14px; font-weight: 400; }
+  .big-value .unit { font-family: var(--font-mono); font-size: 14px; font-weight: 400; color: var(--fg-3); }
   .bar {
     width: 100%;
     height: 6px;
@@ -742,20 +779,21 @@
     margin-bottom: 0.5rem;
   }
   .stat-val {
+    font-family: var(--font-display);
     font-size: 24px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: -0.02em;
     color: var(--fg-0);
     line-height: 1.1;
   }
-  .stat-val .unit { font-size: 12px; font-weight: 400; }
+  .stat-val .unit { font-family: var(--font-mono); font-size: 12px; font-weight: 400; color: var(--fg-3); }
   .small { font-size: var(--font-size-xs); margin-top: 0.4rem; }
 
   /* Inventory */
   .banner {
     padding: 0.65rem 1rem;
-    border-color: rgba(56, 189, 248, 0.2);
-    background: rgba(56, 189, 248, 0.04);
+    border-color: rgba(255, 107, 0, 0.2);
+    background: rgba(255, 107, 0, 0.04);
     margin-bottom: 1rem;
   }
   .banner p { margin: 0; font-size: var(--font-size-sm); color: var(--fg-1); }
@@ -776,7 +814,7 @@
   th { background: var(--bg-1); position: sticky; top: 0; z-index: 1; padding: 0.55rem 0.75rem; }
   tbody tr { cursor: pointer; transition: background var(--t-fast); }
   tbody tr:hover { background: var(--bg-3); }
-  tbody tr.selected { background: rgba(56, 189, 248, 0.05); }
+  tbody tr.selected { background: rgba(255, 107, 0, 0.05); }
   tbody td { padding: 0.5rem 0.75rem; }
 
   .action-bar {
@@ -788,9 +826,12 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    transition: border-color var(--t-base);
+    transition: all var(--t-base);
   }
-  .action-bar.active { border-color: var(--accent); }
+  .action-bar.active { 
+    background: var(--bg-3);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  }
   .action-buttons { display: flex; gap: 0.55rem; }
 
   /* Optimize */

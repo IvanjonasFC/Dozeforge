@@ -1,26 +1,30 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { goto } from '$app/navigation';
+  import { invoke } from '@tauri-apps/api/core';
   import { api, DozeForgeError } from '$tauri/api';
   import { deviceStore } from '$stores/device.svelte';
   import { labelStore } from '$stores/labels.svelte';
   import { appModalStore } from '$stores/appModal.svelte';
+  import { i18n } from '$stores/i18n.svelte';
   import AppName from '$components/AppName.svelte';
   import Skeleton from '$components/Skeleton.svelte';
-  import SlideOver from '$components/SlideOver.svelte';
   import type { ProcessRow, ProcessSnapshot, ProcessState, TelemetryTick } from '$types';
   import type { UnlistenFn } from '@tauri-apps/api/event';
 
   let snap = $state<ProcessSnapshot | null>(null);
-  let thermal = $state<{ raw_value: number, label: string } | null>(null);
+  let thermal = $state<{ raw_value: number, label: string, temperature: number | null } | null>(null);
   let lastTickTs = $state<number | null>(null);
+  let cpuHistory = $state<number[]>([]);
   let streaming = $state(false);
   let error = $state<string | null>(null);
 
+  // Filters and Grouping
   let filter = $state('');
-  let stateFilter = $state<'all' | 'zombie' | 'hog' | 'running'>('all');
-  let hideSystem = $state(true);
-  let selected = $state<ProcessRow | null>(null);
+  let stateFilter = $state<'all' | 'zombie' | 'hog' | 'running' | 'background' | 'foreground' | 'system' | 'user' | 'high_cpu' | 'high_ram'>('all');
+  let viewMode = $state<'threads' | 'apps'>('threads');
+
+  let expandedRowId = $state<number | string | null>(null);
+  let actionBusy = $state(false);
   let unsubscribe: UnlistenFn | null = null;
 
   async function startStream() {
@@ -30,10 +34,10 @@
       unsubscribe = await api.onTelemetryTick((tick: TelemetryTick) => {
         snap = tick.snapshot;
         lastTickTs = tick.ts_ms;
+        if (tick.cpu_history) cpuHistory = tick.cpu_history;
       });
       await api.startTelemetryStream(deviceStore.selected.serial, 3);
       streaming = true;
-      // Trigger a first synchronous snapshot too so the user doesn't wait 3s
       try {
         snap = await api.processStatus(deviceStore.selected.serial);
         thermal = await api.getThermalStatus(deviceStore.selected.serial);
@@ -45,39 +49,58 @@
   }
 
   async function stopStream() {
-    try {
-      await api.stopTelemetryStream();
-    } catch {}
+    try { await api.stopTelemetryStream(); } catch {}
     if (unsubscribe) { unsubscribe(); unsubscribe = null; }
     streaming = false;
   }
 
-  onMount(() => {
-    if (deviceStore.selected?.state === 'device') startStream();
-  });
+  onMount(() => { if (deviceStore.selected?.state === 'device') startStream(); });
   onDestroy(() => { stopStream(); });
 
   const filtered = $derived.by<ProcessRow[]>(() => {
     if (!snap) return [];
     const serial = deviceStore.selected?.serial ?? null;
     const needle = filter.toLowerCase();
-    return snap.rows.filter((r) => {
-      if (hideSystem && !r.package) return false;
+    
+    let rows = snap.rows.filter((r) => {
       if (needle) {
         const label = r.package ? labelStore.labelFor(serial, r.package).toLowerCase() : '';
         const hay = `${r.package ?? ''} ${label} ${r.args}`.toLowerCase();
         if (!hay.includes(needle)) return false;
       }
       if (stateFilter === 'zombie' && !r.is_zombie) return false;
-      if (stateFilter === 'hog' && !r.is_hog_candidate) return false;
+      if (stateFilter === 'hog' && !r.is_smart_hog && !r.is_hog_candidate) return false;
       if (stateFilter === 'running' && r.state !== 'running') return false;
+      if (stateFilter === 'system' && !r.package) return false; // Crude approximation
+      if (stateFilter === 'user' && r.package === null) return false;
+      if (stateFilter === 'high_cpu' && r.cpu_percent < 5) return false;
+      if (stateFilter === 'high_ram' && r.rss_kb < 102400) return false;
       return true;
     });
+
+    if (viewMode === 'apps') {
+      const grouped = new Map<string, ProcessRow>();
+      for (const r of rows) {
+        if (!r.package) continue;
+        const existing = grouped.get(r.package);
+        if (existing) {
+          existing.cpu_percent += r.cpu_percent;
+          existing.rss_kb += r.rss_kb;
+          if (r.is_zombie) existing.is_zombie = true;
+          if (r.is_smart_hog) existing.is_smart_hog = true;
+          existing.args = `${existing.args.split(' ')[0]} (+ threads)`;
+        } else {
+          grouped.set(r.package, { ...r });
+        }
+      }
+      rows = Array.from(grouped.values());
+      rows.sort((a, b) => b.cpu_percent - a.cpu_percent);
+    }
+
+    return rows;
   });
 
-  function heatIntensity(cpu: number): number {
-    return Math.min(1, cpu / 80);
-  }
+  const topConsumer = $derived(snap?.rows.length ? snap.rows.reduce((prev, curr) => (prev.cpu_percent > curr.cpu_percent) ? prev : curr) : null);
 
   function stateChar(s: ProcessState): string {
     switch (s) {
@@ -86,135 +109,152 @@
       case 'uninterruptiblesleep': return 'D';
       case 'zombie': return 'Z';
       case 'stopped': return 'T';
-      case 'idle': return 'I';
       default: return '?';
     }
   }
 
-  function fmtRss(kb: number): string {
-    if (kb < 1024) return `${kb} KB`;
+  function fmtRss(kb: number | undefined): string {
+    if (!kb) return '0 MB';
+    if (kb < 1024) return `${kb.toFixed(0)} KB`;
     return `${(kb / 1024).toFixed(1)} MB`;
   }
 
-  function fmtAge(ts: number | null): string {
-    if (!ts) return '—';
-    const s = Math.floor((Date.now() - ts) / 1000);
-    if (s < 60) return `${s}s ago`;
-    return `${Math.floor(s / 60)}m ago`;
-  }
-
+  // --- Actions ---
   async function restrict(pkg: string | null) {
     if (!pkg) return;
-    selected = null;
-    // Open the inline app-details modal (general context — caller may be
-    // inspecting any kind of process from telemetry).
-    appModalStore.open(pkg, 'general');
+    appModalStore.open(pkg);
   }
 
-  let actionBusy = $state(false);
-
-  async function hibernateApp(pkg: string | null) {
-    if (!pkg || !deviceStore.selected) return;
+  async function killAllZombies() {
+    if (!deviceStore.selected) return;
     actionBusy = true; error = null;
     try {
-      await api.hibernatePackage(deviceStore.selected.serial, pkg, true);
-      alert(`Hibernated ${pkg}. It will be force-stopped and prevented from waking up until next launch.`);
-      selected = null;
-    } catch (e) {
-      error = (e as DozeForgeError).message;
-    } finally { actionBusy = false; }
+      await invoke('kill_all_zombies', { serial: deviceStore.selected.serial });
+      alert(i18n.t('All zombie processes have been terminated.'));
+    } catch (e) { error = (e as DozeForgeError).message; }
+    finally { actionBusy = false; }
   }
 
-  async function enableGameMode(pkg: string | null) {
-    if (!pkg || !deviceStore.selected) return;
+  async function killProcess(pid: number, name: string) {
+    if (!deviceStore.selected || !confirm(i18n.t('Force kill process {{name}} (PID {{pid}})? This may cause app crashes or system instability.', { name, pid }))) return;
     actionBusy = true; error = null;
     try {
-      await api.setGameMode(deviceStore.selected.serial, pkg, 2); // GAME_MODE_PERFORMANCE
-      alert(`Game Mode (Performance) enabled for ${pkg}.`);
-      selected = null;
-    } catch (e) {
-      error = (e as DozeForgeError).message;
-    } finally { actionBusy = false; }
+      await invoke('run_shell', { serial: deviceStore.selected.serial, command: `kill -9 ${pid}` });
+      alert(i18n.t('Sent kill signal to PID {{pid}}.', { pid }));
+    } catch (e) { error = (e as DozeForgeError).message; }
+    finally { actionBusy = false; }
+  }
+
+  async function trimMemory() {
+    if (!deviceStore.selected) return;
+    actionBusy = true; error = null;
+    try {
+      await invoke('trim_memory', { serial: deviceStore.selected.serial });
+      alert(i18n.t('System-wide memory trim requested.'));
+    } catch (e) { error = (e as DozeForgeError).message; }
+    finally { actionBusy = false; }
+  }
+
+  async function toggleFixedPerf() {
+    if (!deviceStore.selected) return;
+    actionBusy = true; error = null;
+    try {
+      await api.setFixedPerformanceMode(deviceStore.selected.serial, true);
+      alert(i18n.t('Fixed Performance Mode enabled.'));
+    } catch (e) { error = (e as DozeForgeError).message; }
+    finally { actionBusy = false; }
   }
 </script>
 
 <header class="page-head">
   <div>
-    <h1>Telemetry</h1>
+    <h1>{i18n.t('Telemetry')}</h1>
     <p class="muted">
-      Live process table. Polled every 3s while this page is open.
+      {i18n.t('Live process monitor & optimization. Polled every 3s.')}
       <span class="badge" class:ok={streaming} class:elevated={!streaming}>
-        {streaming ? '● Streaming' : '○ Paused'}
+        {streaming ? i18n.t('● Streaming') : i18n.t('○ Paused')}
       </span>
     </p>
   </div>
   <div class="head-actions">
-    {#if lastTickTs}
-      <span class="muted age-label">Tick {fmtAge(lastTickTs)}</span>
-    {/if}
     {#if streaming}
-      <button onclick={stopStream}>Pause</button>
+      <button onclick={stopStream}>{i18n.t('Pause')}</button>
     {:else}
-      <button class="primary" onclick={startStream} disabled={!deviceStore.selected}>Start</button>
+      <button class="primary" onclick={startStream} disabled={!deviceStore.selected}>{i18n.t('Start')}</button>
     {/if}
   </div>
 </header>
 
 {#if !deviceStore.selected}
-  <div class="card empty"><p class="muted">No device connected.</p></div>
+  <div class="card empty"><p class="muted">{i18n.t('No device connected.')}</p></div>
 {:else}
   {#if error}<div class="error">{error}</div>{/if}
 
-  <div class="stat-row">
-    <div class="stat">
-      <div class="stat-label">Processes</div>
-      <div class="stat-value">{snap?.rows.length ?? '—'}</div>
-    </div>
-    <div class="stat" class:alert={thermal && thermal.raw_value >= 3}>
-      <div class="stat-label">Thermal</div>
-      <div class="stat-value" data-tier={thermal ? (thermal.raw_value >= 3 ? 'bad' : thermal.raw_value > 0 ? 'warn' : 'ok') : 'ok'}>
-        {thermal?.label ?? '—'}
+  <div class="stat-grid">
+    <!-- CPU Breakdown -->
+    <div class="stat-card">
+      <div class="stat-label">{i18n.t('CPU Breakdown')}</div>
+      <div class="stat-value">{snap ? (snap.cpu_user + snap.cpu_sys + snap.cpu_iowait).toFixed(1) : '—'}%</div>
+      <div class="stat-sub">
+        <span style="color:var(--good)">{i18n.t('User')}: {snap?.cpu_user?.toFixed(1) ?? 0}%</span> &nbsp;
+        <span style="color:var(--warn)">{i18n.t('Sys')}: {snap?.cpu_sys?.toFixed(1) ?? 0}%</span> &nbsp;
+        <span style="color:var(--bad)">{i18n.t('IO')}: {snap?.cpu_iowait?.toFixed(1) ?? 0}%</span>
       </div>
     </div>
-    <div class="stat" class:alert={snap && snap.zombie_count > 0}>
-      <div class="stat-label">Zombies</div>
-      <div class="stat-value" data-tier={snap && snap.zombie_count > 0 ? 'bad' : 'ok'}>
-        {snap?.zombie_count ?? '—'}
+
+    <!-- RAM & Swap -->
+    <div class="stat-card">
+      <div class="stat-label">{i18n.t('Mem Available & Swap')}</div>
+      <div class="stat-value">{snap ? `${snap.mem_available_mb} MB` : '—'}</div>
+      <div class="stat-sub">
+        {i18n.t('Swap Used')}: {snap ? `${snap.swap_total_mb - snap.swap_free_mb} MB` : '0 MB'} / {snap ? `${snap.swap_total_mb} MB` : '0 MB'}
       </div>
     </div>
-    <div class="stat" class:alert={snap && snap.hog_candidate_count > 2}>
-      <div class="stat-label">Hog candidates</div>
-      <div class="stat-value" data-tier={snap && snap.hog_candidate_count > 2 ? 'bad' : 'warn'}>
-        {snap?.hog_candidate_count ?? '—'}
+
+    <!-- Thermal & Top -->
+    <div class="stat-card">
+      <div class="stat-label">{i18n.t('Thermal Status')}</div>
+      <div class="stat-value" style="color: {thermal && thermal.raw_value >= 3 ? 'var(--bad)' : 'var(--fg-0)'}">
+        {thermal?.temperature ? `${thermal.temperature}°C` : (thermal?.label ?? i18n.t('Cool'))}
       </div>
+      <div class="stat-sub">{i18n.t('Top')}: {topConsumer?.package ? labelStore.labelFor(deviceStore.selected.serial, topConsumer.package) : (topConsumer?.args.split(' ')[0] ?? '—')} ({topConsumer?.cpu_percent.toFixed(1) ?? 0}%)</div>
     </div>
-    <div class="stat">
-      <div class="stat-label">Total CPU</div>
-      <div class="stat-value">
-        {snap ? `${snap.total_cpu_percent.toFixed(0)}%` : '—'}
+
+    <!-- CPU Trend -->
+    <div class="stat-card">
+      <div class="stat-label">{i18n.t('CPU Trend (3 min)')}</div>
+      <div class="spark-container">
+        <svg viewBox="0 0 60 20" class="sparkline" preserveAspectRatio="none">
+          {#if cpuHistory.length > 0}
+            <polyline fill="none" stroke="var(--accent)" stroke-width="1.5"
+                      points={cpuHistory.map((val, i) => `${i},${Math.max(0, 20 - (val / 100) * 20)}`).join(' ')} />
+          {/if}
+        </svg>
       </div>
-    </div>
-    <div class="stat">
-      <div class="stat-label">Total RSS</div>
-      <div class="stat-value">{snap ? fmtRss(snap.total_rss_kb) : '—'}</div>
     </div>
   </div>
 
+  <div class="mass-actions" style="margin-bottom: 1rem; display: flex; gap: 0.5rem; flex-wrap: wrap;">
+    <button class="primary" onclick={killAllZombies} disabled={actionBusy || !snap?.zombie_count}>{i18n.t('Kill all zombies')} ({snap?.zombie_count ?? 0})</button>
+    <button class="primary outline" onclick={trimMemory} disabled={actionBusy}>{i18n.t('Trim Memory')}</button>
+    <button class="primary outline" onclick={toggleFixedPerf} disabled={actionBusy}>{i18n.t('Fixed Performance Mode')}</button>
+  </div>
+
   <div class="card filter-bar">
-    <input
-      type="search"
-      placeholder="Filter by package or args…"
-      bind:value={filter}
-    />
+    <input type="search" placeholder={i18n.t('Filter by package...')} bind:value={filter} />
     <label style="margin-right: auto; margin-left: 0.5rem; display: flex; align-items: center; gap: 0.35rem; font-size: var(--font-size-xs); cursor: pointer; color: var(--fg-2);">
-      <input type="checkbox" bind:checked={hideSystem} style="width: auto;">
-      Hide system threads
+      <input type="checkbox" checked={viewMode === 'apps'} onchange={(e) => viewMode = e.currentTarget.checked ? 'apps' : 'threads'} style="width: auto;">
+      {i18n.t('Group by App')}
     </label>
     <div class="filter-pills">
-      <button class:active={stateFilter === 'all'}     onclick={() => stateFilter = 'all'}>All</button>
-      <button class:active={stateFilter === 'running'} onclick={() => stateFilter = 'running'}>R</button>
-      <button class:active={stateFilter === 'zombie'}  onclick={() => stateFilter = 'zombie'}>Zombies</button>
-      <button class:active={stateFilter === 'hog'}     onclick={() => stateFilter = 'hog'}>Hogs</button>
+      <select bind:value={stateFilter} style="padding: 0.35rem 0.5rem; font-size: var(--font-size-xs); background: var(--bg-3); border: 1px solid var(--border); border-radius: 4px; color: var(--fg-0);">
+        <option value="all">{i18n.t('All Processes')}</option>
+        <option value="running">{i18n.t('Running (R)')}</option>
+        <option value="zombie">{i18n.t('Zombies')}</option>
+        <option value="hog">{i18n.t('Smart Hogs')}</option>
+        <option value="high_cpu">{i18n.t('High CPU (>5%)')}</option>
+        <option value="high_ram">{i18n.t('High RAM (>100MB)')}</option>
+      </select>
     </div>
   </div>
 
@@ -226,27 +266,23 @@
         <table class="proc-table">
           <thead>
             <tr>
-              <th>PID</th>
-              <th>S</th>
-              <th>%CPU</th>
-              <th>RSS</th>
-              <th>Package / Args</th>
+              <th>{i18n.t('PID')}</th>
+              <th>{i18n.t('S')}</th>
+              <th>{i18n.t('%CPU')}</th>
+              <th>{i18n.t('RSS')}</th>
+              <th>{i18n.t('Package / Args')}</th>
               <th></th>
             </tr>
           </thead>
           <tbody>
             {#each filtered as row (row.pid)}
-              <tr
-                class:zombie={row.is_zombie}
-                class:hog={row.is_hog_candidate}
-                onclick={() => selected = row}
-              >
-                <td class="mono pid">{row.pid}</td>
-                <td>
-                  <span class="state-badge" data-state={row.state}>{stateChar(row.state)}</span>
-                </td>
+              <!-- Main Row -->
+              <tr class:zombie={row.is_zombie} class:hog={row.is_smart_hog || row.is_hog_candidate} class:expanded={expandedRowId === row.pid}
+                  onclick={() => expandedRowId = expandedRowId === row.pid ? null : row.pid}>
+                <td class="mono pid">{viewMode === 'apps' ? '—' : row.pid}</td>
+                <td><span class="state-badge" data-state={row.state}>{stateChar(row.state)}</span></td>
                 <td class="mono">
-                  <div class="inline-bar" style="--bar-pct: {Math.min(100, (row.cpu_percent / 20) * 100)}%; --bar-color: {row.cpu_percent > 80 ? 'var(--bad)' : (row.cpu_percent > 40 ? 'var(--warn)' : 'var(--accent-dim)')}">
+                  <div class="inline-bar" style="--bar-pct: {Math.min(100, (row.cpu_percent / 20) * 100)}%; --bar-color: {row.cpu_percent > 50 ? 'var(--bad)' : (row.cpu_percent > 20 ? 'var(--warn)' : 'var(--accent-dim)')}">
                     <div class="inline-bar-fill"></div>
                     <span class="inline-bar-text">{row.cpu_percent.toFixed(1)}%</span>
                   </div>
@@ -265,220 +301,101 @@
                   {/if}
                 </td>
                 <td>
-                  {#if row.is_zombie}<span class="badge critical">ZOMBIE</span>{/if}
-                  {#if row.is_hog_candidate}<span class="badge elevated">HOG</span>{/if}
+                  {#if row.is_zombie}<span class="badge critical">{i18n.t('ZOMBIE')}</span>{/if}
+                  {#if row.is_smart_hog || row.is_hog_candidate}<span class="badge elevated">{i18n.t('HOG')}</span>{/if}
                 </td>
               </tr>
+              <!-- Expandable Inline Action Row -->
+              {#if expandedRowId === row.pid}
+                <tr class="inline-expanded-row">
+                  <td colspan="6">
+                    <div class="expanded-panel">
+                      <div class="expanded-stats">
+                        <div><strong>{i18n.t('PID')}:</strong> {row.pid} | <strong>{i18n.t('User')}:</strong> {row.user}</div>
+                        <div><strong>{i18n.t('Full Args')}:</strong> <span class="mono muted">{row.args}</span></div>
+                      </div>
+                      <div class="expanded-actions">
+                        {#if row.package}
+                          <button class="primary outline" onclick={() => restrict(row.package)}>{i18n.t('Optimize App Options')}</button>
+                        {/if}
+                        <button class="danger outline" onclick={() => killProcess(row.pid, row.package || row.args.split(' ')[0] || '')}>{i18n.t('Force Kill Process')}</button>
+                      </div>
+                    </div>
+                  </td>
+                </tr>
+              {/if}
             {/each}
           </tbody>
         </table>
       </div>
-      <p class="muted footnote">
-        Showing {filtered.length} of {snap.rows.length} processes. Click a row for details.
-      </p>
     </div>
   {/if}
 {/if}
 
-<SlideOver open={selected !== null} onClose={() => selected = null} title="Process detail" width="440px">
-  {#if selected}
-    <div class="detail-block">
-      <div class="detail-label">PID</div>
-      <div class="mono detail-value">{selected.pid}</div>
-    </div>
-    <div class="detail-block">
-      <div class="detail-label">User</div>
-      <div class="mono detail-value">{selected.user}</div>
-    </div>
-    <div class="detail-block">
-      <div class="detail-label">State</div>
-      <div class="detail-value">
-        <span class="state-badge" data-state={selected.state}>{stateChar(selected.state)}</span>
-        <span class="muted">{selected.state}</span>
-      </div>
-    </div>
-    <div class="detail-block">
-      <div class="detail-label">%CPU (snapshot)</div>
-      <div class="mono detail-value">{selected.cpu_percent.toFixed(1)}%</div>
-    </div>
-    <div class="detail-block">
-      <div class="detail-label">RSS</div>
-      <div class="mono detail-value">{fmtRss(selected.rss_kb)}</div>
-    </div>
-    {#if selected.package}
-      <div class="detail-block">
-        <div class="detail-label">App</div>
-        <div class="detail-value">
-          <AppName package={selected.package} size="md" />
-        </div>
-      </div>
-    {/if}
-    <div class="detail-block">
-      <div class="detail-label">Args</div>
-      <div class="mono detail-value detail-args">{selected.args}</div>
-    </div>
-
-    <div class="detail-actions">
-      {#if selected.package}
-        <div style="display: flex; flex-direction: column; gap: 0.5rem;">
-          <button class="primary" onclick={() => restrict(selected!.package)} disabled={actionBusy}>
-            Restrict in Actions →
-          </button>
-          <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem;">
-            <button class="danger" style="flex: 1; font-size: var(--font-size-sm);" onclick={() => hibernateApp(selected!.package)} disabled={actionBusy}>
-              {actionBusy ? '…' : 'Hibernate App'}
-            </button>
-            <button style="flex: 1; font-size: var(--font-size-sm);" onclick={() => enableGameMode(selected!.package)} disabled={actionBusy}>
-              {actionBusy ? '…' : 'Game Mode'}
-            </button>
-          </div>
-          <p class="muted small" style="margin: 0.2rem 0 0; line-height: 1.4;">
-            <strong>Hibernate:</strong> Force-stops the app and restricts background execution. <br/>
-            <strong>Game Mode:</strong> Sets Android's Game Mode downscaling to Performance (API 31+).
-          </p>
-        </div>
-      {:else}
-        <p class="muted">No package detected; manual restriction only.</p>
-      {/if}
-    </div>
-  {/if}
-</SlideOver>
-
 <style>
   .page-head { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 1.5rem; gap: 1rem; }
-  .page-head h1 { margin-bottom: 0.25rem; letter-spacing: -0.025em; }
-  .page-head p { margin: 0; display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
-  .head-actions { display: flex; align-items: center; gap: 0.85rem; }
-  .age-label { font-size: var(--font-size-xs); }
-
-  .stat-row {
+  .page-head h1 { margin-bottom: 0.25rem; }
+  .page-head p { margin: 0; display: flex; align-items: center; gap: 0.5rem; }
+  
+  .stat-grid {
     display: grid;
-    grid-template-columns: repeat(6, 1fr);
+    grid-template-columns: repeat(4, 1fr);
     gap: 0.75rem;
     margin-bottom: 1rem;
   }
-  .stat {
-    background: var(--bg-2);
-    border: 1px solid var(--border);
+  .stat-card {
+    background: var(--card-bg);
+    border: 1px solid var(--hairline);
     border-radius: var(--radius);
-    padding: 0.75rem 1rem;
-  }
-  .stat.alert { border-color: rgba(239, 68, 68, 0.35); background: rgba(239, 68, 68, 0.04); }
-  .stat-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--fg-3); margin-bottom: 4px; }
-  .stat-value {
-    font-family: var(--font-mono);
-    font-size: 22px;
-    font-weight: 700;
-    color: var(--fg-0);
-    letter-spacing: -0.02em;
-  }
-  .stat-value[data-tier="bad"]  { color: var(--bad); }
-  .stat-value[data-tier="warn"] { color: var(--warn); }
-  .stat-value[data-tier="ok"]   { color: var(--good); }
-
-  .filter-bar {
+    padding: 0.85rem;
     display: flex;
-    gap: 1rem;
-    align-items: center;
-    margin-bottom: 0.85rem;
-    padding: 0.6rem 0.85rem;
+    flex-direction: column;
   }
-  .filter-bar input { flex: 1; max-width: 480px; }
-  .filter-pills { display: flex; gap: 4px; }
-  .filter-pills button {
-    padding: 0.35rem 0.85rem;
-    font-size: var(--font-size-xs);
-    background: transparent;
-    border: 1px solid var(--border);
-  }
-  .filter-pills button.active {
-    background: var(--bg-3);
-    color: var(--fg-0);
-    border-color: var(--accent);
-  }
+  .stat-label { font-size: 10px; text-transform: uppercase; color: var(--fg-3); margin-bottom: 4px; font-weight: 700; letter-spacing: 0.05em; }
+  .stat-value { font-family: var(--font-mono); font-size: 20px; font-weight: 700; color: var(--fg-0); margin-bottom: 4px; }
+  .stat-sub { font-size: 11px; color: var(--fg-2); }
+  
+  .spark-container { height: 28px; width: 100%; margin-top: 4px; }
+  .sparkline { width: 100%; height: 100%; }
+
+  .filter-bar { display: flex; gap: 1rem; align-items: center; margin-bottom: 0.85rem; padding: 0.6rem 0.85rem; }
+  .filter-bar input[type="search"] { flex: 1; max-width: 480px; }
 
   .table-card { padding: 0.85rem; }
-  .proc-table { width: 100%; font-size: 12.5px; }
-  .proc-table th { background: var(--bg-1); position: sticky; top: 0; }
-  .proc-table tbody tr { cursor: pointer; }
-  .proc-table tbody tr.zombie { background: rgba(239, 68, 68, 0.04); }
-  .proc-table tbody tr.hog { background: rgba(245, 158, 11, 0.03); }
+  .proc-table { width: 100%; font-size: 12.5px; border-collapse: collapse; }
+  .proc-table th { background: var(--bg-1); position: sticky; top: 0; text-align: left; padding: 0.5rem; z-index: 2; border-bottom: 1px solid var(--border); }
+  .proc-table td { padding: 0.4rem 0.5rem; border-bottom: 1px solid var(--border); }
+  
+  .proc-table tbody tr { cursor: pointer; transition: background 0.1s; }
+  .proc-table tbody tr:hover { background: var(--bg-3); }
+  .proc-table tbody tr.expanded { background: var(--bg-3); }
+  .proc-table tbody tr.zombie { background: rgba(239, 68, 68, 0.05); }
+  .proc-table tbody tr.hog { background: rgba(245, 158, 11, 0.05); }
+  
+  .inline-expanded-row td { padding: 0; border-bottom: 1px solid var(--border); background: var(--bg-2); }
+  .expanded-panel { padding: 0.85rem 1rem; display: flex; justify-content: space-between; align-items: flex-start; border-left: 3px solid var(--accent); }
+  .expanded-stats { font-size: 12px; color: var(--fg-1); display: flex; flex-direction: column; gap: 0.4rem; }
+  .expanded-actions { display: flex; gap: 0.5rem; }
+
   .pid { color: var(--fg-2); width: 60px; }
   .args { max-width: 480px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .pkg { color: var(--fg-0); }
 
   .state-badge {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 22px;
-    height: 22px;
-    border-radius: 4px;
-    font-family: var(--font-mono);
-    font-weight: 700;
-    font-size: 11px;
-    color: var(--fg-2);
-    background: var(--bg-3);
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 22px; height: 22px; border-radius: 4px; font-family: var(--font-mono);
+    font-weight: 700; font-size: 11px; color: var(--fg-2); background: var(--bg-3);
   }
   .state-badge[data-state="zombie"]  { background: var(--bad); color: white; }
-  .state-badge[data-state="running"] { background: var(--good); color: #00131C; }
-  .state-badge[data-state="uninterruptiblesleep"] { background: var(--warn); color: #00131C; }
+  .state-badge[data-state="running"] { background: var(--good); color: var(--on-accent); }
+  .state-badge[data-state="uninterruptiblesleep"] { background: var(--warn); color: var(--on-accent); }
 
-  .footnote { font-size: var(--font-size-xs); margin: 0.75rem 0 0 0; }
-
-  /* Slide-over body */
-  .detail-block {
-    margin-bottom: 1rem;
-    padding-bottom: 0.85rem;
-    border-bottom: 1px solid var(--border);
-  }
-  .detail-block:last-child { border-bottom: none; }
-  .detail-label {
-    font-size: 10.5px;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--fg-3);
-    margin-bottom: 0.35rem;
-  }
-  .detail-value {
-    font-size: var(--font-size-base);
-    color: var(--fg-0);
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-  }
-  .detail-args {
-    font-size: var(--font-size-sm);
-    word-break: break-all;
-    white-space: normal;
-    line-height: 1.5;
-  }
-  .detail-actions { margin-top: 1.5rem; }
-
-  /* Visual Bars */
   .inline-bar {
-    position: relative;
-    display: inline-flex;
-    align-items: center;
-    width: 55px;
-    height: 20px;
-    background: var(--bg-3);
-    border-radius: 4px;
-    overflow: hidden;
+    position: relative; display: inline-flex; align-items: center;
+    width: 55px; height: 20px; background: var(--bg-3); border-radius: 4px; overflow: hidden;
   }
   .inline-bar-fill {
-    position: absolute;
-    left: 0; top: 0; bottom: 0;
-    background: var(--bar-color);
-    width: var(--bar-pct, 0%);
-    opacity: 0.8;
+    position: absolute; left: 0; top: 0; bottom: 0;
+    background: var(--bar-color); width: var(--bar-pct, 0%); opacity: 0.8;
   }
-  .inline-bar-text {
-    position: relative;
-    z-index: 1;
-    padding-left: 6px;
-    font-size: 11px;
-    font-weight: 600;
-  }
+  .inline-bar-text { position: relative; z-index: 1; padding-left: 6px; font-size: 11px; font-weight: 600; }
 </style>
