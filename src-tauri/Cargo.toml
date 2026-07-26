@@ -1,6 +1,6 @@
 [package]
 name = "dozeforge"
-version = "1.0.0"
+version = "1.0.0-beta.1"
 description = "Surgical ADB battery and CPU auditor for Android 12+ with atomic rollback."
 authors = ["DozeForge Contributors"]
 edition = "2021"
