@@ -13,16 +13,22 @@
 //! token `Kernel Wakelock`:
 //!
 //! ### Form A - Legacy (Android 10-12)
-//!     All kernel wake locks:
-//!     Kernel Wakelock "wlan_rx_wake": 4h 21m 3s (12847 times)
-//!     Kernel Wakelock "qcom_rx_wakelock": 1h 47m 12s (3201 times)
+//! ```text
+//! All kernel wake locks:
+//! Kernel Wakelock "wlan_rx_wake": 4h 21m 3s (12847 times)
+//! Kernel Wakelock "qcom_rx_wakelock": 1h 47m 12s (3201 times)
+//! ```
 //!
 //! ### Form B - n= notation (Android 12-13)
-//!     Kernel Wakelocks of type wakeup:
-//!     Kernel Wakelock "wlan_rx_wake": 30m 0s (n=8000)
+//! ```text
+//! Kernel Wakelocks of type wakeup:
+//! Kernel Wakelock "wlan_rx_wake": 30m 0s (n=8000)
+//! ```
 //!
 //! ### Form C - Android 14+ compact, no `Wakelock` keyword on the line
-//!     Wakeup reason "wlan_rx_wake": 4h 21m 3s (12847 times) realtime
+//! ```text
+//! Wakeup reason "wlan_rx_wake": 4h 21m 3s (12847 times) realtime
+//! ```
 //!
 //! Form C is what's been spotted on Pixel 8 Pro and later: the literal
 //! string `Kernel Wakelock` was renamed to `Wakeup reason` in the checkin

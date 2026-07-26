@@ -3177,7 +3177,7 @@ pub async fn backup_app_data(
         return Ok(out);
     }
     // Fallback to root tar if adb backup fails
-    let tar_res = state.adb.invoker.shell(&serial, &format!("su -c 'tar -czf /data/local/tmp/backup.tar.gz /data/data/{}'", pkg), std::time::Duration::from_secs(300)).await.map_err(IpcError::from)?;
+    let _tar_res = state.adb.invoker.shell(&serial, &format!("su -c 'tar -czf /data/local/tmp/backup.tar.gz /data/data/{}'", pkg), std::time::Duration::from_secs(300)).await.map_err(IpcError::from)?;
     let pull_res = state.adb.invoker.exec(&["-s", serial.as_str(), "pull", "/data/local/tmp/backup.tar.gz", &out_path], std::time::Duration::from_secs(300)).await.map_err(IpcError::from)?;
     let _ = state.adb.invoker.shell(&serial, "rm /data/local/tmp/backup.tar.gz", std::time::Duration::from_secs(10)).await;
     Ok(format!("Fallback root backup used.\n{}", pull_res))

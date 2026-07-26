@@ -4,7 +4,9 @@
 //! installed packages. The only reliable source is `dumpsys package <pkg>`,
 //! which emits a section that includes:
 //!
-//!     Application Label: <Name>
+//! ```text
+//! Application Label: <Name>
+//! ```
 //!
 //! when the package's manifest declares `android:label` or when an installer
 //! provided a localised string. Some bare system packages do not emit this

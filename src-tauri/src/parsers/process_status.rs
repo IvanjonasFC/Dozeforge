@@ -10,8 +10,6 @@
 //! Hog detection is a snapshot heuristic. True hogs need continuous sampling
 //! (`CpuSampler` in heuristics/) — this parser only flags candidates.
 
-use once_cell::sync::Lazy;
-use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 use crate::error::Result;

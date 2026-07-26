@@ -122,7 +122,7 @@ In-memory daily stats
 
     #[test]
     fn parses_duration() {
-        assert_eq!(parse_duration_to_ms("01:23:45"), Some(((3600 + 23 * 60 + 45) * 1000)));
+        assert_eq!(parse_duration_to_ms("01:23:45"), Some((3600 + 23 * 60 + 45) * 1000));
         assert_eq!(parse_duration_to_ms("invalid"), None);
     }
 }

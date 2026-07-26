@@ -3,11 +3,11 @@
 use std::fs;
 use std::path::PathBuf;
 
-use dozeforge_lib::heuristics::proxy_detector::rank;
-use dozeforge_lib::parsers::alarm::AlarmParser;
-use dozeforge_lib::parsers::batterystats::BatteryStatsParser;
-use dozeforge_lib::parsers::jobscheduler::JobSchedulerParser;
-use dozeforge_lib::parsers::Parser;
+use forgeandroid_lib::heuristics::proxy_detector::rank;
+use forgeandroid_lib::parsers::alarm::AlarmParser;
+use forgeandroid_lib::parsers::batterystats::BatteryStatsParser;
+use forgeandroid_lib::parsers::jobscheduler::JobSchedulerParser;
+use forgeandroid_lib::parsers::Parser;
 
 fn fixture(name: &str) -> String {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
