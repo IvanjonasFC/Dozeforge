@@ -1,24 +1,40 @@
+<div align="center">
+
 # DozeForge
 
-> Forge your own power-management rules for Android. Surgical battery and CPU auditor over ADB, with atomic rollback and zero root.
+**Forge your own power-management rules for Android. A surgical ADB battery & CPU auditor with atomic rollback and zero root.**
 
-**Status:** Beta 1 (`1.0.0-beta.1`) · **Target:** Android 12+ (API 31..35) · **Stack:** Tauri 2 · Rust 1.79+ · SvelteKit 2 · Svelte 5
+[![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white)](https://tauri.app)
+[![Rust](https://img.shields.io/badge/Rust-1.79+-000000?logo=rust&logoColor=white)](https://www.rust-lang.org)
+[![SvelteKit](https://img.shields.io/badge/SvelteKit-2-FF3E00?logo=svelte&logoColor=white)](https://kit.svelte.dev)
+[![Svelte](https://img.shields.io/badge/Svelte-5-FF3E00?logo=svelte&logoColor=white)](https://svelte.dev)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org)
+[![Android](https://img.shields.io/badge/Android-12%2B%20(API%2031--35)-3DDC84?logo=android&logoColor=white)](https://www.android.com)
+[![scrcpy](https://img.shields.io/badge/Screen_Mirror-scrcpy-ff6b00?logoColor=white)](https://github.com/Genymobile/scrcpy)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+![Version](https://img.shields.io/badge/version-1.0.0--beta.1-ff6b00)
+
+<img src="assets/portada.png" alt="DozeForge" width="920" />
+
+</div>
 
 ---
 
-## Why DozeForge
+## What is DozeForge
 
-Modern Android leaks battery not because of "bad apps" you can guess from a blocklist, but because of:
+DozeForge is a desktop app (Windows, Tauri 2) that audits and fixes Android battery drain **over ADB, without root**. Instead of guessing "bad apps" from a blocklist, it reads the device's real telemetry, traces the *actual* culprit behind the symptom, applies progressive restrictions using only public Android primitives, and snapshots every change so you can **roll back atomically** — or export the whole plan as a Termux/Shizuku shell script that survives without the PC.
 
-1. **OEM bloatware** that survives every reboot and ignores Doze (Samsung Health, MIUI Cleaner, Xiaomi GetApps...).
-2. **Third-party apps proxying through Google Play Services** (FCM, JobScheduler) so the symptom shows up as `com.google.android.gms` while the culprit is hidden.
-3. **Phantom-process killer (API 31+)** that nukes legitimate background tools (Termux, Tasker) while OEM background services keep running fine.
+Modern Android leaks battery because of:
 
-DozeForge reads the actual on-device telemetry over ADB, traces the real culprit (not the proxy), applies progressive restrictions using only public `cmd appops` / `am set-standby-bucket` / `pm disable-user` primitives, snapshots the prior state, and lets you roll back atomically -- or export everything as a Termux/Shizuku shell script so the rules survive without ever needing the PC again.
+1. **OEM bloatware** that survives every reboot and ignores Doze (Samsung Health, MIUI Cleaner, Xiaomi GetApps…).
+2. **Third-party apps proxying through Google Play Services** (FCM, JobScheduler), so the symptom shows up as `com.google.android.gms` while the real culprit stays hidden.
+3. **The phantom-process killer (API 31+)** that nukes legitimate background tools (Termux, Tasker) while OEM services keep running fine.
 
-## What's inside (Beta 1)
+DozeForge is built to see through all three.
 
-DozeForge ships as a frameless desktop app with a global command palette (`Ctrl/Cmd + K`), light/dark themes, and full English / Spanish (EN/ES) localization. The workspace is organized into:
+> **Zero root, public primitives only.** Every change uses `cmd appops`, `am set-standby-bucket`, or `pm disable-user` — all reversible. Nothing under `/system`, `/vendor`, or `/apex` is ever touched, and no package with `uid < 10000` is modified.
+
+## Features
 
 | Area | Route | What it does |
 |------|-------|--------------|
@@ -36,80 +52,69 @@ DozeForge ships as a frameless desktop app with a global command palette (`Ctrl/
 | **Profiles & Snapshots** | `/safety/` | 1-click optimize with atomic undo |
 | **Telemetry** | `/telemetry/` | Live process table |
 | **Logs & Tools** | `/tools/` | Live logcat/dmesg, bugreport capture, automation export |
-| **Toolbox** | `/toolbox/` | Utilities, incl. **Screen Mirror** (scrcpy) |
+| **Toolbox** | `/toolbox/` | Utilities, including **Screen Mirror** (scrcpy) |
 
-## Architecture (high level)
+Extras: a global command palette (`Ctrl/Cmd + K`), light/dark themes, full **English / Spanish** localization, and a frameless custom-chrome window.
 
+## Architecture
+
+```mermaid
+graph TD
+    subgraph APP ["DozeForge — single Tauri 2 process"]
+        UI["SvelteKit 2 / Svelte 5 (static SPA)<br/>Dashboard · Audit · Optimize · Snapshots"]
+        RS["Rust core<br/>ADB client · Parsers · Heuristics · Optimizer · Snapshot store"]
+        UI <-->|"typed IPC (api.ts ⇄ commands.rs)"| RS
+    end
+
+    RS -->|"tokio::process"| ADB["adb shell"]
+    RS -.->|"child process"| SC["scrcpy (screen mirror)"]
+    ADB -->|"dumpsys / sysfs / cmd"| DEV["Android device (API 31–35)"]
+    SC --> DEV
 ```
-+--------------------------------+        +-----------------------------------+
-|      SvelteKit 2 (Svelte 5)    |  IPC   |            Tauri 2 (Rust)         |
-|  Dashboard / Audit / Optimize  | -----> |  ADB client / Parsers / Heuristics|
-|  Snapshots / Bloatware / Export| <----- |  Optimizer / Snapshot store / Log |
-+--------------------------------+ events +----------------+------------------+
-                                                           |  tokio::process
-                                                           v
-                                                   +---------------+
-                                                   |   adb shell   |
-                                                   +---------------+
-```
 
-### Backend modules (`src-tauri/src/`)
+The frontend is pure presentation and does **no** network I/O — even manifest updates flow through the native side. The only external binary is scrcpy, spawned as a child process for screen mirroring (never on the IPC path). See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design rationale.
 
-| Module          | Responsibility                                                                 |
-|-----------------|--------------------------------------------------------------------------------|
-| `adb`           | Async ADB client, device discovery, **multi-device support** (`-s <serial>`), capability probing |
-| `parsers`       | **Version-aware** dumpsys / sysfs parsers (batterystats, cpuinfo, alarm, jobscheduler, deviceidle, kernel wakelocks, process status, storage, DNS, ...) with fixtures per API level |
-| `heuristics`    | Risk classification, **GMS proxy detection** via `dumpsys alarm`, continuous CPU sampling (p50/p95), bloatware recommendations, hybrid manifest |
-| `optimizer`     | Standby buckets, AppOps revocation, selective `am kill`, `pm disable-user --user 0` for bloatware, profiles |
-| `snapshot`      | **True differential snapshots** with content-addressed storage, fingerprint-tolerant rollback |
-| `export`        | Shell script generator with SHA-256 checksum, MacroDroid task templates |
-| `ipc`           | Tauri command handlers + streaming (the only Rust surface exposed to the UI) |
-| `security`      | Package/UID guardrails enforced before any destructive action |
-| `telemetry`     | Structured logging via `tracing` + rotating file appender |
+## Tech stack
 
-See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design rationale.
+**Frontend** — SvelteKit 2, Svelte 5 (runes), TypeScript, Fuse.js (command palette), `@tanstack/svelte-virtual`, custom CSS design system (accent `#FF6B00`).
+**Native** — Tauri 2, Rust 1.79+, `tokio` (async ADB), `tracing` (logging), `serde`, `sha2` (snapshot hashing).
+**Tooling** — Vite 6, Vitest, `svelte-check`, GitHub Actions (Rust + frontend + Android emulator matrix).
+**Bundled** — [scrcpy](https://github.com/Genymobile/scrcpy) for the Screen Mirror feature (fetched, not versioned — see below).
 
-## Setup
+<details>
+<summary>Backend modules (<code>src-tauri/src/</code>)</summary>
+
+| Module | Responsibility |
+|--------|----------------|
+| `adb` | Async ADB client, device discovery, **multi-device support** (`-s <serial>`), capability probing |
+| `parsers` | **Version-aware** dumpsys/sysfs parsers (batterystats, cpuinfo, alarm, jobscheduler, deviceidle, kernel wakelocks, process status, storage, DNS, …) with fixtures per API level |
+| `heuristics` | Risk classification, **GMS proxy detection** via `dumpsys alarm`, continuous CPU sampling (p50/p95), bloatware recommendations |
+| `optimizer` | Standby buckets, AppOps revocation, selective `am kill`, `pm disable-user --user 0`, profiles |
+| `snapshot` | **True differential snapshots** with content-addressed storage, fingerprint-tolerant rollback |
+| `export` | Shell-script generator with SHA-256 checksum, MacroDroid task templates |
+| `ipc` | Tauri command handlers + streaming (the only Rust surface exposed to the UI) |
+| `security` | Package/UID guardrails enforced before any destructive action |
+| `telemetry` | Structured logging via `tracing` + rotating file appender |
+
+</details>
+
+## Getting started
 
 ### Prerequisites
 
-```powershell
-# 1. Node 22+
-node --version
+- **Node 22+**
+- **Rust** toolchain (stable) — `winget install Rustlang.Rustup && rustup default stable`
+- **Tauri 2 CLI** — `cargo install tauri-cli --version "^2.0"`
+- **ADB** platform-tools on your `PATH` (a copy also ships with the bundled scrcpy)
 
-# 2. Rust toolchain -- install if missing
-winget install Rustlang.Rustup
-rustup default stable
-
-# 3. Tauri 2 CLI
-cargo install tauri-cli --version "^2.0"
-
-# 4. ADB platform-tools (a copy is also bundled with scrcpy, see below)
-adb version
-```
-
-### Install + run
+### Install & run (dev)
 
 ```powershell
-cd C:\Users\IvN\Documents\GitHub\dozeforge
-npm install          # also fetches scrcpy via postinstall (see below)
+git clone https://github.com/IvanjonasFC/Dozeforge.git
+cd Dozeforge
+npm install          # also fetches scrcpy via postinstall (see Screen Mirror)
 npm run tauri:dev
 ```
-
-### Screen Mirror (scrcpy)
-
-The **Screen Mirror** feature bundles [scrcpy](https://github.com/Genymobile/scrcpy).
-Its ~40 MB of Windows binaries are **not** committed to git; instead they are
-fetched automatically on `npm install` (via `postinstall`). To (re)fetch on demand:
-
-```powershell
-npm run setup:scrcpy             # download if missing
-npm run setup:scrcpy -- --force  # re-download / upgrade
-```
-
-Pinned to `v3.3.4` by default; override with `$env:SCRCPY_VERSION`. See
-[`src-tauri/scrcpy/README.md`](src-tauri/scrcpy/README.md) for details and the
-manual/offline procedure.
 
 ### Build a release bundle
 
@@ -117,68 +122,84 @@ manual/offline procedure.
 npm run tauri:build
 ```
 
-App icons live in `src-tauri/icons/` and are already committed; see
-`src-tauri/icons/README.md` if you want to regenerate them from a single PNG.
+App icons live in `src-tauri/icons/` (already committed); see `src-tauri/icons/README.md` to regenerate them from a single PNG.
+
+<details>
+<summary>Screen Mirror (scrcpy) — how the binaries are handled</summary>
+
+The **Screen Mirror** feature bundles [scrcpy](https://github.com/Genymobile/scrcpy). Its ~40 MB of Windows binaries are **not** committed to git; they are fetched automatically on `npm install` (via `postinstall`), so a fresh clone works out of the box.
+
+```powershell
+npm run setup:scrcpy             # download if missing
+npm run setup:scrcpy -- --force  # re-download / upgrade
+$env:SCRCPY_VERSION = "v3.3.4"; npm run setup:scrcpy   # pin a version
+```
+
+At runtime, `resolve_scrcpy()` prefers the bundled copy, then a `scrcpy/` folder next to the executable, then the system `PATH`, then common install locations. Full details (and the manual/offline procedure) in [`src-tauri/scrcpy/README.md`](src-tauri/scrcpy/README.md).
+
+</details>
 
 ## Safety model
 
-DozeForge never:
+DozeForge **never**:
 
 - Runs as root or asks for root.
 - Touches packages with `uid < 10000`.
 - Touches anything under `/system`, `/vendor`, or `/apex`.
-- Applies a destructive command without a prior snapshot of the affected appops/buckets.
-- Restores a snapshot if `sdk_int` differs from the snapshot's `sdk_int`. A change in `security_patch_month` is allowed within the same SDK.
+- Applies a destructive command without first snapshotting the affected appops/buckets.
+- Restores a snapshot when `sdk_int` differs from the snapshot's `sdk_int` (a change in `security_patch_month` within the same SDK is allowed).
 
-## Repository layout
+<details>
+<summary>Project structure</summary>
 
-```
+```text
 dozeforge/
-├─ README.md                  (this file)
-├─ LICENSE                    (MIT)
-├─ docs/ARCHITECTURE.md       (deep technical rationale)
+├─ README.md · LICENSE (MIT) · docs/ARCHITECTURE.md
+├─ assets/portada.png                (cover art)
 ├─ package.json + svelte/vite/ts configs
-├─ scripts/setup-scrcpy.mjs   (fetches the scrcpy Windows build)
-├─ src/                       (SvelteKit frontend)
-│   ├─ routes/                (Overview, Fleet, Sleep, Battery, Storage, Network,
-│   │                          System, Tweaks, Apps, Files, Backup, Safety,
-│   │                          Telemetry, Tools, Toolbox)
-│   ├─ lib/
-│   │   ├─ components/        (DevicePicker, PairingModal, CommandPalette,
-│   │   │                      AppDetailsModal, AppName, BatteryHistory,
-│   │   │                      DebloatWizard, CapabilitiesBanner, RiskBadge,
-│   │   │                      StatCard, Skeleton)
-│   │   ├─ stores/            (device, cache, i18n, labels, snapshots, theme,
-│   │   │                      appModal — Svelte 5 runes singletons)
-│   │   ├─ parsers/           (frontend parsers: appInspector, batteryHistory, trackerScan)
-│   │   ├─ data/trackers.ts   (known tracker signatures)
-│   │   ├─ tauri/api.ts       (typed wrapper over invoke())
-│   │   ├─ types.ts           (mirror of Rust serialised types)
-│   │   └─ utils/format.ts
-│   └─ styles/global.css
-├─ src-tauri/                 (Rust backend)
-│   ├─ Cargo.toml             (Tauri 2.1, tokio, tracing, regex, serde, sha2, ...)
-│   ├─ tauri.conf.json
-│   ├─ capabilities/          (granular Tauri 2 capabilities)
-│   ├─ icons/                 (app icons, committed)
-│   ├─ scrcpy/                (README only; binaries fetched, git-ignored)
-│   ├─ manifests/             (seed hybrid manifest with known offenders)
-│   └─ src/
-│       ├─ main.rs + lib.rs   (registers the Tauri command surface)
-│       ├─ adb/               (client, device, command, capabilities)
-│       ├─ parsers/           (dumpsys/sysfs parsers + shared types)
-│       ├─ heuristics/        (risk, manifest, proxy_detector, sampling, bloatware)
-│       ├─ optimizer/         (actions, executor, bloatware, profiles)
-│       ├─ snapshot/          (store, diff, rollback)
-│       ├─ export/            (shell_script with SHA-256, macrodroid)
-│       ├─ ipc/               (commands + streaming — the exposed surface)
-│       ├─ security/          (UID/package guardrails)
-│       ├─ telemetry/logger.rs
-│       └─ state.rs + error.rs
-├─ tests/fixtures/            (batterystats / alarm / jobscheduler for API 34)
-└─ .github/workflows/ci.yml   (Rust + Frontend + Android emulator matrix)
+├─ scripts/setup-scrcpy.mjs          (fetches the scrcpy Windows build)
+├─ src/                              (SvelteKit frontend)
+│  ├─ routes/                        (Overview, Fleet, Sleep, Battery, Storage, Network,
+│  │                                  System, Tweaks, Apps, Files, Backup, Safety,
+│  │                                  Telemetry, Tools, Toolbox)
+│  ├─ lib/
+│  │  ├─ components/                 (DevicePicker, PairingModal, CommandPalette,
+│  │  │                               AppDetailsModal, AppName, BatteryHistory,
+│  │  │                               DebloatWizard, CapabilitiesBanner, RiskBadge,
+│  │  │                               StatCard, Skeleton)
+│  │  ├─ stores/                     (device, cache, i18n, labels, snapshots, theme,
+│  │  │                               appModal — Svelte 5 runes singletons)
+│  │  ├─ parsers/                    (appInspector, batteryHistory, trackerScan)
+│  │  ├─ data/trackers.ts            (known tracker signatures)
+│  │  ├─ tauri/api.ts                (typed wrapper over invoke())
+│  │  ├─ types.ts                    (mirror of Rust serialised types)
+│  │  └─ utils/format.ts
+│  └─ styles/global.css
+├─ src-tauri/                        (Rust backend)
+│  ├─ Cargo.toml · tauri.conf.json
+│  ├─ capabilities/                  (granular Tauri 2 capabilities)
+│  ├─ icons/                         (app icons, committed)
+│  ├─ scrcpy/                        (README only; binaries fetched, git-ignored)
+│  ├─ resources/ · manifests/        (seed manifests, UAD lists)
+│  └─ src/
+│     ├─ main.rs + lib.rs            (registers the Tauri command surface)
+│     ├─ adb/ · parsers/ · heuristics/ · optimizer/
+│     ├─ snapshot/ · export/ · ipc/ · security/ · telemetry/
+│     └─ state.rs + error.rs
+├─ tests/fixtures/                   (batterystats / alarm / jobscheduler for API 34)
+└─ .github/workflows/ci.yml          (Rust + frontend + Android emulator matrix)
 ```
+
+</details>
+
+## Roadmap
+
+- [ ] macOS / Linux desktop builds
+- [ ] Signed, auto-updating manifest of known offenders
+- [ ] Scheduled/automated audits per device
+- [ ] Expanded fleet actions and profiles
+- [ ] In-app scrcpy recording & snapshots
 
 ## License
 
-MIT -- see `LICENSE`.
+Distributed under the [MIT](LICENSE) license.
