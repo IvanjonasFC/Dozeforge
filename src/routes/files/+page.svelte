@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { api, DozeForgeError } from '$tauri/api';
   import { deviceStore } from '$stores/device.svelte';
+  import { i18n } from '$stores/i18n.svelte';
   import Skeleton from '$components/Skeleton.svelte';
 
   let cwd = $state('/sdcard');
@@ -92,7 +93,7 @@
 
   async function createFolder() {
     if (!deviceStore.selected) return;
-    const folderName = prompt("Enter new folder name:");
+    const folderName = prompt(i18n.t("Enter new folder name:"));
     if (!folderName) return;
     try {
       const remotePath = cwd.endsWith('/') ? cwd + folderName : cwd + '/' + folderName;
@@ -108,7 +109,7 @@
 
   async function deleteItem(f: any) {
     if (!deviceStore.selected) return;
-    if (!confirm(`Are you sure you want to delete ${f.name}? This action cannot be undone.`)) return;
+    if (!confirm(i18n.t('Are you sure you want to delete {{name}}? This action cannot be undone.', { name: f.name }))) return;
     try {
       const remotePath = cwd.endsWith('/') ? cwd + f.name : cwd + '/' + f.name;
       actionBusy = true; error = null;
@@ -124,27 +125,27 @@
 
 <header class="page-head">
   <div>
-    <h1>File Manager</h1>
-    <p class="muted">Explore internal storage, transfer files quickly via ADB.</p>
+    <h1>{i18n.t('File Manager')}</h1>
+    <p class="muted">{i18n.t('Explore internal storage, transfer files quickly via ADB.')}</p>
   </div>
   <div class="actions">
     <button class="btn outline" onclick={createFolder} disabled={actionBusy || !deviceStore.selected}>
-      New Folder
+      {i18n.t('New Folder')}
     </button>
     <button class="primary" onclick={uploadFile} disabled={actionBusy || !deviceStore.selected}>
-      {actionBusy ? 'Uploading...' : 'Upload File Here'}
+      {actionBusy ? i18n.t('Uploading...') : i18n.t('Upload File Here')}
     </button>
   </div>
 </header>
 
 {#if !deviceStore.selected}
-  <div class="card empty"><p class="muted">No device connected.</p></div>
+  <div class="card empty"><p class="muted">{i18n.t('No device connected.')}</p></div>
 {:else}
   <div class="card" style="padding: 0;">
     <div class="path-bar">
-      <button class="btn icon-btn" onclick={goUp} disabled={cwd === '/' || cwd === '/sdcard'}>↑ Up</button>
+      <button class="btn icon-btn" onclick={goUp} disabled={cwd === '/' || cwd === '/sdcard'}>↑ {i18n.t('Up')}</button>
       <input type="text" value={cwd} readonly class="path-input" />
-      <button class="btn" onclick={() => loadDir(cwd)} disabled={loading}>↻ Refresh</button>
+      <button class="btn" onclick={() => loadDir(cwd)} disabled={loading}>↻ {i18n.t('Refresh')}</button>
     </div>
     
     {#if error}
@@ -155,16 +156,16 @@
       {#if loading}
         <div style="padding: 1rem;"><Skeleton lines={10} /></div>
       {:else if files.length === 0}
-        <div class="empty-state muted">Directory is empty or permission denied.</div>
+        <div class="empty-state muted">{i18n.t('Directory is empty or permission denied.')}</div>
       {:else}
         <table>
           <thead>
             <tr>
               <th style="width: 40px;"></th>
-              <th>Name</th>
-              <th>Size</th>
-              <th>Date</th>
-              <th>Actions</th>
+              <th>{i18n.t('Name')}</th>
+              <th>{i18n.t('Size')}</th>
+              <th>{i18n.t('Date')}</th>
+              <th>{i18n.t('Actions')}</th>
             </tr>
           </thead>
           <tbody>
@@ -193,11 +194,11 @@
                 <td class="actions-td" onclick={(e) => e.stopPropagation()}>
                   <div style="display: flex; gap: 0.5rem; justify-content: flex-end; align-items: center;">
                     {#if !f.is_dir}
-                      <button class="btn small outline" onclick={() => downloadFile(f)} disabled={actionBusy}>↓ Download</button>
+                      <button class="btn small outline" onclick={() => downloadFile(f)} disabled={actionBusy}>↓ {i18n.t('Download')}</button>
                     {:else}
-                      <span class="muted small">Open →</span>
+                      <span class="muted small">{i18n.t('Open →')}</span>
                     {/if}
-                    <button class="btn small outline" style="color: var(--error);" onclick={() => deleteItem(f)} disabled={actionBusy}>Delete</button>
+                    <button class="btn small outline" style="color: var(--error);" onclick={() => deleteItem(f)} disabled={actionBusy}>{i18n.t('Delete')}</button>
                   </div>
                 </td>
               </tr>

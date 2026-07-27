@@ -2,6 +2,8 @@
   import Fuse from 'fuse.js';
   import { onMount } from 'svelte';
   import { i18n } from '$stores/i18n.svelte';
+  import { themeStore } from '$stores/theme.svelte';
+  import { deviceStore } from '$stores/device.svelte';
 
   interface Props {
     open: boolean;
@@ -10,31 +12,36 @@
   let { open = $bindable(false), onNavigate }: Props = $props();
 
   const commands = $derived([
-    { id: 'nav:overview',   label: i18n.t('Go to Overview'),      hint: i18n.t('snapshot of device state'),         action: () => onNavigate('/') },
-    { id: 'nav:fleet',      label: i18n.t('Go to Fleet'),         hint: i18n.t('bulk actions on many devices'),     action: () => onNavigate('/fleet/') },
-    { id: 'nav:apps',       label: i18n.t('Go to App Manager'),   hint: i18n.t('bloatware, firewall, permissions'), action: () => onNavigate('/apps/') },
-    { id: 'nav:sleep',      label: i18n.t('Go to Doze & Sleep'),  hint: i18n.t('wakelock analysis'),                action: () => onNavigate('/sleep/') },
-    { id: 'nav:battery',    label: i18n.t('Go to Battery'),       hint: i18n.t('health, cycles, sysfs'),            action: () => onNavigate('/battery/') },
-    { id: 'nav:storage',    label: i18n.t('Go to Storage'),       hint: i18n.t('inventory, trim, dexopt'),          action: () => onNavigate('/storage/') },
-    { id: 'nav:safety',     label: i18n.t('Go to Profiles & Snapshots'), hint: i18n.t('1-click optimize, undo'),     action: () => onNavigate('/safety/') },
-    { id: 'nav:backup',     label: i18n.t('Go to Backup & Restore'), hint: i18n.t('encrypted .ab backups'),          action: () => onNavigate('/backup/') },
-    { id: 'nav:tweaks',     label: i18n.t('Go to Advanced Tweaks'), hint: i18n.t('RAM Plus, phantom limit, …'),      action: () => onNavigate('/tweaks/') },
-    { id: 'nav:network',    label: i18n.t('Go to Network & DNS'), hint: i18n.t('private DNS, data saver'),          action: () => onNavigate('/network/') },
-    { id: 'nav:system',     label: i18n.t('Go to System Tweaks'), hint: i18n.t('global system settings'),           action: () => onNavigate('/system/') },
-    { id: 'nav:telemetry',  label: i18n.t('Go to Telemetry'),     hint: i18n.t('live process table'),               action: () => onNavigate('/telemetry/') },
-    { id: 'nav:tools',      label: i18n.t('Go to Diagnostics & Tools'), hint: i18n.t('logs, bugreport, automation'), action: () => onNavigate('/tools/') },
-    { id: 'nav:files',      label: i18n.t('Go to File Manager'),  hint: i18n.t('browse device storage'),            action: () => onNavigate('/files/') },
-    { id: 'apps:permissions', label: i18n.t('Open Permissions Audit'), hint: i18n.t('review granted permissions'),  action: () => onNavigate('/apps/?tab=permissions') },
-    { id: 'network:dns',      label: i18n.t('Open Private DNS'),  hint: i18n.t('AdGuard, Cloudflare, ...'),          action: () => onNavigate('/network/') },
-    { id: 'storage:inventory', label: i18n.t('Storage inventory'), hint: i18n.t('apps by code size'),               action: () => onNavigate('/storage/') },
-    { id: 'tools:logs',       label: i18n.t('Open Live Logs'),    hint: i18n.t('logcat / dmesg stream'),            action: () => onNavigate('/tools/?tab=logs') },
-    { id: 'tools:bugreport',  label: i18n.t('Capture Bugreport'), hint: i18n.t('full device dump'),                 action: () => onNavigate('/tools/?tab=bugreport') },
-    { id: 'tools:actions',    label: i18n.t('Advanced Tools'),    hint: i18n.t('power-user operations'),            action: () => onNavigate('/tools/?tab=actions') },
-    { id: 'tools:profiles',   label: i18n.t('Automation Profiles'), hint: i18n.t('export / import scripts'),        action: () => onNavigate('/tools/?tab=profiles') },
+    // ── Actions (executable — things the sidebar can't do) ──────────────
+    { id: 'act:theme',   group: i18n.t('Actions'), label: i18n.t('Toggle light / dark theme'),            hint: i18n.t('light / dark'), action: () => { themeStore.toggle(); open = false; } },
+    { id: 'act:lang',    group: i18n.t('Actions'), label: i18n.t('Change Language (English / Español)'),  hint: i18n.lang === 'es' ? 'ES → EN' : 'EN → ES', action: () => { i18n.toggle(); open = false; } },
+    { id: 'act:refresh', group: i18n.t('Actions'), label: i18n.t('Refresh devices'),                     hint: i18n.t('rescan ADB'), action: () => { deviceStore.refresh(); open = false; } },
+    // ── Navigate ────────────────────────────────────────────────────────
+    { id: 'nav:overview',   group: i18n.t('Navigate'), label: i18n.t('Go to Overview'),      hint: i18n.t('snapshot of device state'),         action: () => onNavigate('/') },
+    { id: 'nav:fleet',      group: i18n.t('Navigate'), label: i18n.t('Go to Fleet'),         hint: i18n.t('bulk actions on many devices'),     action: () => onNavigate('/fleet/') },
+    { id: 'nav:apps',       group: i18n.t('Navigate'), label: i18n.t('Go to App Manager'),   hint: i18n.t('bloatware, firewall, permissions'), action: () => onNavigate('/apps/') },
+    { id: 'nav:sleep',      group: i18n.t('Navigate'), label: i18n.t('Go to Doze & Sleep'),  hint: i18n.t('wakelock analysis'),                action: () => onNavigate('/sleep/') },
+    { id: 'nav:battery',    group: i18n.t('Navigate'), label: i18n.t('Go to Battery'),       hint: i18n.t('health, cycles, sysfs'),            action: () => onNavigate('/battery/') },
+    { id: 'nav:storage',    group: i18n.t('Navigate'), label: i18n.t('Go to Storage'),       hint: i18n.t('inventory, trim, dexopt'),          action: () => onNavigate('/storage/') },
+    { id: 'nav:safety',     group: i18n.t('Navigate'), label: i18n.t('Go to Profiles & Snapshots'), hint: i18n.t('1-click optimize, undo'),     action: () => onNavigate('/safety/') },
+    { id: 'nav:backup',     group: i18n.t('Navigate'), label: i18n.t('Go to Backup & Restore'), hint: i18n.t('encrypted .ab backups'),          action: () => onNavigate('/backup/') },
+    { id: 'nav:tweaks',     group: i18n.t('Navigate'), label: i18n.t('Go to Advanced Tweaks'), hint: i18n.t('RAM Plus, phantom limit, …'),      action: () => onNavigate('/tweaks/') },
+    { id: 'nav:network',    group: i18n.t('Navigate'), label: i18n.t('Go to Network & DNS'), hint: i18n.t('private DNS, data saver'),          action: () => onNavigate('/network/') },
+    { id: 'nav:system',     group: i18n.t('Navigate'), label: i18n.t('Go to System Tweaks'), hint: i18n.t('global system settings'),           action: () => onNavigate('/system/') },
+    { id: 'nav:telemetry',  group: i18n.t('Navigate'), label: i18n.t('Go to Telemetry'),     hint: i18n.t('live process table'),               action: () => onNavigate('/telemetry/') },
+    { id: 'nav:tools',      group: i18n.t('Navigate'), label: i18n.t('Go to Diagnostics & Tools'), hint: i18n.t('logs, bugreport, automation'), action: () => onNavigate('/tools/') },
+    { id: 'nav:files',      group: i18n.t('Navigate'), label: i18n.t('Go to File Manager'),  hint: i18n.t('browse device storage'),            action: () => onNavigate('/files/') },
+    { id: 'apps:permissions', group: i18n.t('Jump to'), label: i18n.t('Open Permissions Audit'), hint: i18n.t('review granted permissions'),  action: () => onNavigate('/apps/?tab=permissions') },
+    { id: 'network:dns',      group: i18n.t('Jump to'), label: i18n.t('Open Private DNS'),  hint: i18n.t('AdGuard, Cloudflare, ...'),          action: () => onNavigate('/network/') },
+    { id: 'storage:inventory', group: i18n.t('Jump to'), label: i18n.t('Storage inventory'), hint: i18n.t('apps by code size'),               action: () => onNavigate('/storage/') },
+    { id: 'tools:logs',       group: i18n.t('Jump to'), label: i18n.t('Open Live Logs'),    hint: i18n.t('logcat / dmesg stream'),            action: () => onNavigate('/tools/?tab=logs') },
+    { id: 'tools:bugreport',  group: i18n.t('Jump to'), label: i18n.t('Capture Bugreport'), hint: i18n.t('full device dump'),                 action: () => onNavigate('/tools/?tab=bugreport') },
+    { id: 'tools:actions',    group: i18n.t('Jump to'), label: i18n.t('Advanced Tools'),    hint: i18n.t('power-user operations'),            action: () => onNavigate('/tools/?tab=actions') },
+    { id: 'tools:profiles',   group: i18n.t('Jump to'), label: i18n.t('Automation Profiles'), hint: i18n.t('export / import scripts'),        action: () => onNavigate('/tools/?tab=profiles') },
   ]);
 
   const fuse = $derived(new Fuse(commands, {
-    keys: ['label', 'hint', 'id'],
+    keys: ['label', 'hint', 'id', 'group'],
     threshold: 0.4,
     includeScore: false
   }));
@@ -99,8 +106,11 @@
             tabindex="0"
             onkeydown={(e) => { if (e.key === 'Enter') item.action(); }}
           >
-            <div class="label">{item.label}</div>
-            <div class="hint">{item.hint}</div>
+            <div class="cmd-main">
+              <div class="label">{item.label}</div>
+              <div class="hint">{item.hint}</div>
+            </div>
+            <span class="cmd-group">{item.group}</span>
           </li>
         {/each}
         {#if results.length === 0}
@@ -174,13 +184,28 @@
     border-radius: var(--radius);
     cursor: pointer;
     display: flex;
-    flex-direction: column;
-    gap: 2px;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
     transition: background var(--t-fast);
   }
   li.active { background: var(--bg-3); }
-  li .label { color: var(--fg-0); font-size: var(--font-size-base); }
-  li .hint { color: var(--fg-3); font-size: var(--font-size-xs); }
+  .cmd-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  li .label { color: var(--fg-0); font-size: var(--font-size-base); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  li .hint { color: var(--fg-3); font-size: var(--font-size-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cmd-group {
+    flex-shrink: 0;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--fg-3);
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    border-radius: 99px;
+    padding: 2px 8px;
+  }
+  li.active .cmd-group { border-color: var(--border-strong); color: var(--fg-2); }
   li.empty {
     color: var(--fg-3);
     text-align: center;

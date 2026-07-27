@@ -660,20 +660,25 @@ async fn inner_overview(state: Arc<AppState>, serial: String) -> Result<Overview
 }
 
 async fn read_battery_health(adb: &crate::adb::AdbClient, serial: &DeviceSerial) -> BatteryHealth {
-    // Try sysfs first
-    let script = BatterySysfsParser::read_script();
-    if let Ok(out) = adb.invoker.shell(serial, script, Duration::from_secs(8)).await {
-        if let Ok(h) = BatterySysfsParser::parse(&out) {
-            if h.source.is_some() {
-                return h;
-            }
+    // Universal baseline: `dumpsys battery` returns level, temperature, status
+    // and voltage on EVERY Android device regardless of vendor. This is the
+    // reliable floor — the previous code returned early on sysfs even when the
+    // node existed but exposed nothing, leaving Nothing/other ROMs all-unknown.
+    let mut health = match adb.invoker.shell(serial, "dumpsys battery", Duration::from_secs(8)).await {
+        Ok(out) => BatterySysfsParser::parse_dumpsys(&out),
+        Err(_) => BatteryHealth::default(),
+    };
+
+    // Enhance with sysfs where the kernel exposes it: cycle count and full/
+    // design charge (→ health %), which dumpsys usually lacks. Fields sysfs
+    // doesn't provide are left as the dumpsys values.
+    if let Ok(out) = adb.invoker.shell(serial, BatterySysfsParser::read_script(), Duration::from_secs(8)).await {
+        if let Ok(sys) = BatterySysfsParser::parse(&out) {
+            health.merge_from_sysfs(sys);
         }
     }
-    // Fallback to dumpsys battery
-    if let Ok(out) = adb.invoker.shell(serial, "dumpsys battery", Duration::from_secs(8)).await {
-        return BatterySysfsParser::parse_dumpsys(&out);
-    }
-    BatteryHealth::default()
+
+    health
 }
 
 async fn read_meminfo(adb: &crate::adb::AdbClient, serial: &DeviceSerial) -> (Option<u64>, Option<u64>) {
@@ -705,9 +710,38 @@ fn parse_kb_to_mb(raw: &str) -> Option<u64> {
 pub async fn battery_health(
     state: State<'_, Arc<AppState>>,
     serial: String,
+    deep: Option<bool>,
 ) -> std::result::Result<BatteryHealth, IpcError> {
     let serial = checked_serial(&serial)?;
-    Ok(read_battery_health(&state.adb, &serial).await)
+    let mut health = read_battery_health(&state.adb, &serial).await;
+
+    // Deep read (battery page only, NOT the 5s heartbeat): if sysfs didn't
+    // expose design capacity (root-locked on many ROMs), fall back to the
+    // capacity estimates in `dumpsys batterystats`, which are readable without
+    // root. --charged skips the multi-MB history; grep keeps the transfer tiny.
+    if deep.unwrap_or(false) && health.charge_full_design_uah.is_none() {
+        if let Ok(out) = state.adb.invoker.shell(
+            &serial,
+            "dumpsys batterystats --charged 2>/dev/null | grep -iE 'battery capacity' | head -6",
+            Duration::from_secs(30),
+        ).await {
+            let (estimated_mah, learned_mah) = BatterySysfsParser::parse_batterystats_capacity(&out);
+            // Convert mAh → µAh to reuse the existing health computation.
+            if let Some(est) = estimated_mah {
+                if est > 0.0 {
+                    health.charge_full_design_uah = Some((est * 1000.0) as u64);
+                    let full = learned_mah.unwrap_or(est);
+                    health.charge_full_uah = Some((full * 1000.0) as u64);
+                    health.health_percent = Some(((full / est) * 100.0) as f32);
+                    if health.source.is_none() || health.source.as_deref() == Some("dumpsys battery") {
+                        health.source = Some("dumpsys batterystats".to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(health)
 }
 
 #[tauri::command]
@@ -1333,26 +1367,23 @@ pub async fn battery_per_app(
 ) -> std::result::Result<crate::parsers::battery_drain::BatteryDrain, IpcError> {
     use std::collections::HashSet;
     use crate::parsers::battery_drain::BatteryDrainParser;
-    use crate::parsers::batterystats::build_uid_to_package_map;
 
     let serial = checked_serial(&serial)?;
 
-    // Parallel fetch: checkin (for UID map) + textual (for drain section).
-    // batterystats dumps are large (several MB) and slow over wireless ADB —
-    // give them a generous timeout so they don't fail on Wi-Fi connections.
-    let checkin_fut = state.adb.invoker.shell(
-        &serial,
-        "dumpsys batterystats --checkin",
-        Duration::from_secs(90),
-    );
-    // `--charged` = stats since last full charge WITHOUT the multi-MB history
-    // dump. The "Estimated power use (mAh):" section comes *after* that history,
-    // so over Wi-Fi the plain dump was getting truncated before reaching it.
+    // The ONLY heavy, mandatory fetch: `--charged` contains the
+    // "Estimated power use (mAh):" section the drain parser needs, without the
+    // multi-MB event history that gets truncated over Wi-Fi. Everything else
+    // below is best-effort enrichment and must never block per-app drain.
     let text_fut = state.adb.invoker.shell(
         &serial,
         "dumpsys batterystats --charged",
         Duration::from_secs(90),
     );
+    // UID→package map from a lightweight `pm list packages -U` (~KB), instead of
+    // a *second* multi-MB `--checkin` dump. The old approach made per-app drain
+    // fail entirely whenever the checkin dump was slow/truncated — even though
+    // --charged had already succeeded. This is the main robustness fix.
+    let pkgs_fut = safe_pm_list_packages(&state.adb.invoker, &serial);
     let power_fut = state.adb.invoker.shell(
         &serial,
         "dumpsys power",
@@ -1364,11 +1395,19 @@ pub async fn battery_per_app(
         Duration::from_secs(15),
     );
 
-    let (checkin_res, text_res, power_res, top_res) =
-        tokio::join!(checkin_fut, text_fut, power_fut, top_fut);
+    let (text_res, pkgs_res, power_res, top_res) =
+        tokio::join!(text_fut, pkgs_fut, power_fut, top_fut);
 
-    let checkin = checkin_res.map_err(IpcError::from)?;
     let text = text_res.map_err(IpcError::from)?;
+
+    // UID→package map — best-effort. If it fails, UIDs simply show numerically.
+    let uid_to_pkg: HashMap<i32, PackageName> = match pkgs_res {
+        Ok(raw) => PackageListParser
+            .parse(&raw)
+            .map(|pkgs| pkgs.into_iter().map(|p| (p.uid, p.name)).collect())
+            .unwrap_or_default(),
+        Err(_) => HashMap::new(),
+    };
 
     // Build cross-reference sets:
     //   - live wakelock packages (from `dumpsys power`)
@@ -1395,7 +1434,6 @@ pub async fn battery_per_app(
         Err(_) => HashSet::new(),
     };
 
-    let uid_to_pkg = build_uid_to_package_map(&checkin);
     let drain = BatteryDrainParser { uid_to_pkg, live_wakelock_pkgs, zombie_pkgs }
         .parse(&text)
         .map_err(IpcError::from)?;
@@ -1405,7 +1443,6 @@ pub async fn battery_per_app(
     // or `has_section` is false, the device simply has no discharge data yet.
     tracing::info!(
         target: "dozeforge::battery",
-        checkin_len = checkin.len(),
         text_len = text.len(),
         has_section = text.contains("Estimated power use (mAh):"),
         entries = drain.entries.len(),
@@ -2745,8 +2782,52 @@ pub async fn get_thermal_status(
         6 => "SHUTDOWN",
         _ => "UNKNOWN",
     };
-    
+
+    // Fallback: many SoCs' thermalservice reports status but no temperature.
+    // Read the kernel thermal zones directly and pick a CPU/SoC-ish zone.
+    // Values are milli-°C (e.g. 38500) or already °C on some kernels.
+    if temp.is_none() {
+        temp = read_thermal_zone_temp(&state.adb, &serial).await;
+    }
+
     Ok(ThermalStatus { raw_value: val, label: label.to_string(), temperature: temp })
+}
+
+/// Read `/sys/class/thermal/thermal_zone*/temp` and return the temperature of a
+/// CPU/SoC zone (or the hottest plausible zone) in °C. Zone naming varies wildly
+/// across SoCs, so we prefer common CPU zone types but fall back to any sane
+/// reading. Best-effort: returns None if nothing readable (e.g. SELinux-locked).
+async fn read_thermal_zone_temp(adb: &crate::adb::AdbClient, serial: &DeviceSerial) -> Option<f32> {
+    let script = r#"for z in /sys/class/thermal/thermal_zone*; do
+  t=$(cat "$z/type" 2>/dev/null)
+  v=$(cat "$z/temp" 2>/dev/null)
+  [ -n "$v" ] && echo "$t=$v"
+done"#;
+    let out = adb.invoker.shell(serial, script, Duration::from_secs(6)).await.ok()?;
+
+    let normalise = |raw: i64| -> Option<f32> {
+        // milli-°C (38500), deci-°C (385) or °C (38). Pick the sane one.
+        let c = if raw > 1000 { raw as f32 / 1000.0 }
+                else if raw > 200 { raw as f32 / 10.0 }
+                else { raw as f32 };
+        if (-20.0..=120.0).contains(&c) { Some(c) } else { None }
+    };
+
+    let mut preferred: Option<f32> = None;
+    let mut any_hot: Option<f32> = None;
+    for line in out.lines() {
+        let Some((ty, val)) = line.split_once('=') else { continue };
+        let Ok(raw) = val.trim().parse::<i64>() else { continue };
+        let Some(c) = normalise(raw) else { continue };
+        let ty_l = ty.to_ascii_lowercase();
+        if ty_l.contains("cpu") || ty_l.contains("soc") || ty_l.contains("tsens") || ty_l.contains("ap_") {
+            // First CPU/SoC-type zone wins.
+            if preferred.is_none() { preferred = Some(c); }
+        }
+        // Track the hottest reasonable zone as a last resort.
+        if any_hot.map(|h| c > h).unwrap_or(true) { any_hot = Some(c); }
+    }
+    preferred.or(any_hot)
 }
 
 #[tauri::command]

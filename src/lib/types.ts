@@ -350,6 +350,16 @@ export interface DiskStats {
   data_total_bytes: number | null;
   recent_write_speed_kb_s: number | null;
   file_based_encryption: boolean | null;
+  // Category breakdown (bytes), modern Android 12+ diskstats.
+  app_size_bytes: number | null;
+  app_data_size_bytes: number | null;
+  app_cache_size_bytes: number | null;
+  photos_size_bytes: number | null;
+  videos_size_bytes: number | null;
+  audio_size_bytes: number | null;
+  downloads_size_bytes: number | null;
+  system_size_bytes: number | null;
+  other_size_bytes: number | null;
 }
 
 export interface StorageOverview {

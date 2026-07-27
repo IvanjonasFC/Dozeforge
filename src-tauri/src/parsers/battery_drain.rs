@@ -73,6 +73,15 @@ pub struct BatteryDrain {
 static SECTION_START: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?m)^\s*Estimated power use \(mAh\):").unwrap());
 
+// The next top-level section header after the power-use block. `dumpsys
+// batterystats` follows "Estimated power use" with other sections that ALSO
+// contain `Uid NNNN:` lines with a totally different meaning — notably
+// "Per-app mobile ms per packet:" (`Uid 1051: 113 (382 packets ...)`). Without
+// bounding the scope, those get mis-parsed as drain and collide with real
+// entries. A section header is a line whose only trailing token is a colon.
+static SECTION_END: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?m)^[ \t]*[A-Za-z][^\n:]*:[ \t]*$").unwrap());
+
 static CAPACITY_LINE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(
         r"(?m)^\s*Capacity:\s*(?P<cap>\d+),\s*Computed drain:\s*(?P<comp>[\d.]+)(?:,\s*actual drain:\s*(?P<min>[\d.]+)(?:-(?P<max>[\d.]+))?)?",
@@ -115,7 +124,15 @@ impl Parser for BatteryDrainParser {
         let Some(start) = SECTION_START.find(input) else {
             return Ok(BatteryDrain::default());
         };
-        let scope = &input[start.start()..];
+        // Bound the scope to just this section: from its header to the next
+        // top-level section header. Prevents `Uid NNNN:` lines in later,
+        // unrelated sections (e.g. per-packet network stats) from being parsed
+        // as drain and producing duplicate UIDs.
+        let scope_end = SECTION_END
+            .find(&input[start.end()..])
+            .map(|m| start.end() + m.start())
+            .unwrap_or(input.len());
+        let scope = &input[start.start()..scope_end];
 
         let mut out = BatteryDrain::default();
         if let Some(c) = CAPACITY_LINE.captures(scope) {
@@ -175,6 +192,18 @@ impl Parser for BatteryDrainParser {
                 verdict,
             });
         }
+
+        // Safety net: guarantee one entry per UID (keep the largest drain) so a
+        // keyed UI list can never receive duplicate keys, even if a future ROM
+        // format slips a repeated UID past the scope bound above.
+        out.entries.sort_by(|a, b| {
+            a.uid.cmp(&b.uid).then(
+                b.drain_mah
+                    .partial_cmp(&a.drain_mah)
+                    .unwrap_or(std::cmp::Ordering::Equal),
+            )
+        });
+        out.entries.dedup_by_key(|e| e.uid);
 
         out.entries.sort_by(|a, b| b.drain_mah.partial_cmp(&a.drain_mah).unwrap_or(std::cmp::Ordering::Equal));
         Ok(out)
@@ -364,5 +393,81 @@ mod tests {
         let out = a15_parser().parse(A15_FORMAT).unwrap();
         let media = out.entries.iter().find(|e| e.uid == 10_044).unwrap();
         assert_eq!(media.verdict, AppDrainVerdict::LegitimateMedia);
+    }
+
+    // ── Verbatim Pixel 8 Pro / Android 15 slice (real `--charged` dump) ───────
+    // Captures two format quirks the synthetic fixtures didn't:
+    //   1. System UID with only `bg:` and no fg/cached  (`UID 1051: 301 bg: 301`)
+    //   2. Breakdown values followed by a parenthesised duration
+    //      (`audio=18.8 (11m 57s 829ms)`) — the token regex must read 18.8, not
+    //      choke on the trailing `(...)`.
+    const PIXEL8_REAL: &str = "\
+  Estimated power use (mAh):
+    Capacity: 4716, Computed drain: 3050, actual drain: 3050
+    Global
+    screen: 191 apps: 191
+    cpu: 551 apps: 761 duration: 12h 59m 7s 168ms
+  UID 1051: 301 bg: 301
+      mobile_radio=301 mobile_radio:bg=301 wifi=0.173 wifi:bg=0.173
+  UID u0a301: 260 fg: 36.6 (13m 15s 307ms) bg: 79.9 (27m 26s 698ms) cached: 128 (17h 13m 7s 570ms)
+      screen=15.7 cpu=18.7 cpu:fg=12.7 cpu:bg=6.02 audio=18.8 (11m 57s 829ms) video=3.35 (8m 3s 80ms) wifi=0.871 wakelock=202 (17h 56m 52s 710ms) GPU=1.05
+  UID u0a307: 215 fg: 92.0 (55m 22s 725ms) bg: 20.3 (3h 9m 14s 523ms) cached: 31.2 (17h 55m 9s 989ms)
+      screen=71.0 cpu=98.8 audio=13.0 (8m 17s 525ms) video=14.3 (34m 14s 229ms) wifi=1.26 GPU=16.2
+";
+
+    // Regression: a later section ("Per-app mobile ms per packet:") repeats
+    // `Uid 1051:` with a different meaning. The parser must NOT leak it into the
+    // drain list — that caused duplicate UIDs and crashed the keyed UI list.
+    const TRAILING_SECTION_LEAK: &str = "\
+  Estimated power use (mAh):
+    Capacity: 4716, Computed drain: 3050, actual drain: 3050
+  UID 1051: 301 bg: 301
+      mobile_radio=301 wifi=0.173
+  UID u0a301: 260 fg: 36.6
+      cpu=18.7 audio=18.8 (11m 57s 829ms)
+  Per-app mobile ms per packet:
+    Uid 1051: 113 (382 packets over 43s 275ms) 6x
+    Uid u0a301: 88 (200 packets over 20s) 4x
+";
+
+    #[test]
+    fn does_not_leak_uids_from_trailing_sections() {
+        let p = BatteryDrainParser {
+            uid_to_pkg: HashMap::new(),
+            live_wakelock_pkgs: Default::default(),
+            zombie_pkgs: Default::default(),
+        };
+        let out = p.parse(TRAILING_SECTION_LEAK).unwrap();
+        // Exactly two real entries; no duplicate UIDs.
+        assert_eq!(out.entries.len(), 2);
+        let count_1051 = out.entries.iter().filter(|e| e.uid == 1051).count();
+        assert_eq!(count_1051, 1, "UID 1051 must appear once, not leak from the packet section");
+        // The value must be the drain (301), not the packet-section number (113).
+        let e = out.entries.iter().find(|e| e.uid == 1051).unwrap();
+        assert!((e.drain_mah - 301.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn pixel8_real_parses_all_entries_and_durations() {
+        let mut uid_to_pkg = HashMap::new();
+        uid_to_pkg.insert(10_301, PackageName("com.media.app".into()));
+        let p = BatteryDrainParser {
+            uid_to_pkg,
+            live_wakelock_pkgs: Default::default(),
+            zombie_pkgs: Default::default(),
+        };
+        let out = p.parse(PIXEL8_REAL).unwrap();
+
+        assert_eq!(out.capacity_mah, Some(4716));
+        assert!((out.computed_drain_mah - 3050.0).abs() < 0.001);
+        // All three real UIDs (system 1051 + two apps) survive parsing.
+        assert!(out.entries.iter().any(|e| e.uid == 1051));
+        assert!(out.entries.iter().any(|e| e.uid == 10_301));
+        assert!(out.entries.iter().any(|e| e.uid == 10_307));
+
+        // Breakdown value with trailing (duration) must read the number.
+        let media = out.entries.iter().find(|e| e.uid == 10_301).unwrap();
+        assert!((media.breakdown.get("audio").copied().unwrap_or(0.0) - 18.8).abs() < 0.01);
+        assert!((media.drain_mah - 260.0).abs() < 0.001);
     }
 }

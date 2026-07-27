@@ -362,10 +362,16 @@
           </div>
         </div>
 
-        <!-- System cache -->
+        <!-- App cache (reclaimable) — prefer the real per-app cache total from
+             modern diskstats; fall back to the legacy cache partition. -->
         <div class="card big-card">
-          <div class="card-label">{i18n.t('System cache')}</div>
-          {#if overview.diskstats.cache_total_bytes !== null}
+          <div class="card-label">{i18n.t('App cache')}</div>
+          {#if overview.diskstats.app_cache_size_bytes !== null}
+            <div class="big-value mono">
+              {fmtBytes(overview.diskstats.app_cache_size_bytes)}
+            </div>
+            <p class="muted small">{i18n.t('Reclaimable cache across all apps.')}</p>
+          {:else if overview.diskstats.cache_total_bytes !== null}
             <div class="big-value mono">
               {fmtBytes(overview.diskstats.cache_total_bytes)}
             </div>
@@ -374,10 +380,33 @@
             </p>
           {:else}
             <div class="big-value mono" style="color: var(--fg-3);">N/A</div>
-            <p class="muted small">{i18n.t('Partition not available on this device.')}</p>
+            <p class="muted small">{i18n.t('Not exposed by this ROM.')}</p>
           {/if}
         </div>
       </div>
+
+      {#if overview.diskstats.app_size_bytes !== null || overview.diskstats.photos_size_bytes !== null}
+        <div class="card" style="margin-top: 0.85rem;">
+          <div class="card-label">{i18n.t('Storage breakdown')}</div>
+          <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 0.75rem; margin-top: 0.6rem;">
+            {#each [
+              { label: i18n.t('Apps'), v: overview.diskstats.app_size_bytes },
+              { label: i18n.t('App data'), v: overview.diskstats.app_data_size_bytes },
+              { label: i18n.t('App cache'), v: overview.diskstats.app_cache_size_bytes },
+              { label: i18n.t('Photos'), v: overview.diskstats.photos_size_bytes },
+              { label: i18n.t('Videos'), v: overview.diskstats.videos_size_bytes },
+              { label: i18n.t('Audio'), v: overview.diskstats.audio_size_bytes },
+              { label: i18n.t('Downloads'), v: overview.diskstats.downloads_size_bytes },
+              { label: i18n.t('Other'), v: overview.diskstats.other_size_bytes }
+            ].filter(x => x.v !== null && x.v > 0) as item (item.label)}
+              <div class="breakdown-cell">
+                <div class="stat-label">{item.label}</div>
+                <div class="mono">{fmtBytes(item.v)}</div>
+              </div>
+            {/each}
+          </div>
+        </div>
+      {/if}
 
       <div class="grid two-grid" style="margin-top: 0.85rem;">
         <div class="card stat-tile">
@@ -674,6 +703,12 @@
 {/if}
 
 <style>
+  .breakdown-cell {
+    padding: 0.5rem 0.65rem;
+    background: var(--control-bg);
+    border-radius: var(--radius-sm);
+  }
+  .breakdown-cell .mono { font-size: 0.95rem; margin-top: 0.15rem; }
   .page-head {
     display: flex;
     justify-content: space-between;

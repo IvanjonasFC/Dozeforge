@@ -63,7 +63,7 @@
     try {
       await api.setAnimationScales(deviceStore.selected.serial, scale);
       cache.invalidatePrefix('perf:');
-      success = `Animation scale set to ${scale}x.`;
+      success = i18n.t('Animation scale set to {{scale}}x.', { scale });
       await fetchPerf();
     } catch (e) { errorPerf = (e as DozeForgeError).message; }
     finally { perfBusy = false; }
@@ -75,7 +75,7 @@
     try {
       await api.setBackgroundProcessLimit(deviceStore.selected.serial, limit);
       cache.invalidatePrefix('perf:');
-      success = `Background process limit set to ${limit === null ? 'Standard' : limit}.`;
+      success = i18n.t('Background process limit set to {{value}}.', { value: limit === null ? i18n.t('Standard') : limit });
       await fetchPerf();
     } catch (e) { errorPerf = (e as DozeForgeError).message; }
     finally { perfBusy = false; }
@@ -90,7 +90,7 @@
       const next = !bypassEnabled;
       await api.setChargeBypass(deviceStore.selected.serial, next);
       bypassEnabled = next;
-      success = next ? 'Charge bypass ENABLED. Power goes directly to components, bypassing the battery. Ideal for gaming.' : 'Charge bypass DISABLED. Normal charging resumed.';
+      success = next ? i18n.t('Charge bypass ENABLED. Power goes directly to components, bypassing the battery. Ideal for gaming.') : i18n.t('Charge bypass DISABLED. Normal charging resumed.');
     } catch (e) { errorHealth = (e as DozeForgeError).message; }
     finally { bypassBusy = false; }
   }
@@ -99,29 +99,45 @@
     if (!deviceStore.selected) return;
     loadingHealth = true; errorHealth = null;
     try {
-      battery = await api.batteryHealth(deviceStore.selected.serial);
+      battery = await api.batteryHealth(deviceStore.selected.serial, true);
     } catch (e) { errorHealth = (e as DozeForgeError).message; }
     finally { loadingHealth = false; }
   }
 
+  let drainTimedOut = $state(false);
   async function fetchDrain() {
     if (!deviceStore.selected) return;
-    loadingDrain = true; errorDrain = null;
+    loadingDrain = true; errorDrain = null; drainTimedOut = false;
+    const serial = deviceStore.selected.serial;
     try {
-      drain = await api.batteryPerApp(deviceStore.selected.serial);
+      // dumpsys batterystats can be slow — or hang — over Wi-Fi ADB. Cap the
+      // wait so the UI recovers into the empty/retry state instead of loading
+      // forever.
+      drain = await Promise.race([
+        api.batteryPerApp(serial),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('__timeout__')), 30000)),
+      ]) as typeof drain;
       console.debug('[DozeForge] battery_per_app →', {
         entries: drain?.entries?.length ?? 0,
         computed_drain_mah: drain?.computed_drain_mah,
         capacity_mah: drain?.capacity_mah,
       });
       if (drain?.entries) {
-        const pkgs = drain.entries.map(e => e.package).slice(0, 30);
-        api.getAppRestrictionsBatch(deviceStore.selected.serial, pkgs)
-           .then(res => { appRestrictions = res; })
-           .catch(e => console.warn(e));
+        // Only real, installed package names can be queried for app-ops.
+        // System/shared UIDs surface as synthetic labels ("system:uid=1051",
+        // "uid=1051") which fail backend package validation — skip them.
+        const isRealPkg = (p: string) => p.includes('.') && !p.includes('=') && !p.includes(':');
+        const pkgs = drain.entries.map(e => e.package).filter(isRealPkg).slice(0, 30);
+        if (pkgs.length) {
+          api.getAppRestrictionsBatch(serial, pkgs)
+             .then(res => { appRestrictions = res; })
+             .catch(e => console.warn(e));
+        }
       }
-    } catch (e) { errorDrain = (e as DozeForgeError).message; }
-    finally { loadingDrain = false; }
+    } catch (e) {
+      if ((e as Error).message === '__timeout__') { drain = null; drainTimedOut = true; }
+      else { errorDrain = (e as DozeForgeError).message; }
+    } finally { loadingDrain = false; }
   }
 
   // In-app diagnostic for the per-app drain: runs the exact command on the
@@ -207,12 +223,12 @@
 
   function verdictBadge(v: AppDrainEntry['verdict']): { cls: string; label: string } {
     switch (v) {
-      case 'zombie':                return { cls: 'bad',  label: 'Zombie' };
-      case 'background_hog':        return { cls: 'bad',  label: 'Background hog' };
-      case 'radio_hog':             return { cls: 'warn', label: 'Radio hog' };
-      case 'legitimate_media':      return { cls: 'ok',   label: 'Media playback' };
-      case 'legitimate_foreground': return { cls: 'ok',   label: 'Foreground use' };
-      default:                      return { cls: 'ok',   label: 'Negligible' };
+      case 'zombie':                return { cls: 'bad',  label: i18n.t('Zombie') };
+      case 'background_hog':        return { cls: 'bad',  label: i18n.t('Background hog') };
+      case 'radio_hog':             return { cls: 'warn', label: i18n.t('Radio hog') };
+      case 'legitimate_media':      return { cls: 'ok',   label: i18n.t('Media playback') };
+      case 'legitimate_foreground': return { cls: 'ok',   label: i18n.t('Foreground use') };
+      default:                      return { cls: 'ok',   label: i18n.t('Negligible') };
     }
   }
 
@@ -237,7 +253,7 @@
     applyBusy = true; errorDisplay = null; success = null;
     try {
       await api.setDisplayDensity(deviceStore.selected.serial, customDensity);
-      success = `Density set to ${customDensity}`;
+      success = i18n.t('Density set to {{value}}', { value: customDensity });
     } catch (e) { errorDisplay = (e as DozeForgeError).message; }
     finally { applyBusy = false; }
   }
@@ -247,7 +263,7 @@
     applyBusy = true; errorDisplay = null; success = null;
     try {
       await api.setDisplaySize(deviceStore.selected.serial, customResolution);
-      success = `Resolution set to ${customResolution}`;
+      success = i18n.t('Resolution set to {{value}}', { value: customResolution });
     } catch (e) { errorDisplay = (e as DozeForgeError).message; }
     finally { applyBusy = false; }
   }
@@ -257,7 +273,7 @@
     applyBusy = true; errorDisplay = null; success = null;
     try {
       await api.resetDisplay(deviceStore.selected.serial);
-      success = `Display metrics reset to default`;
+      success = i18n.t('Display metrics reset to default');
     } catch (e) { errorDisplay = (e as DozeForgeError).message; }
     finally { applyBusy = false; }
   }
@@ -267,7 +283,7 @@
     visualLoadBusy = true; errorDisplay = null; success = null;
     try {
       await api.setWindowBlurs(deviceStore.selected.serial, disable);
-      success = disable ? 'Window blurs disabled.' : 'Window blurs enabled.';
+      success = disable ? i18n.t('Window blurs disabled.') : i18n.t('Window blurs enabled.');
     } catch (e) { errorDisplay = (e as DozeForgeError).message; }
     finally { visualLoadBusy = false; }
   }
@@ -277,7 +293,7 @@
     visualLoadBusy = true; errorDisplay = null; success = null;
     try {
       await api.setReduceTransparency(deviceStore.selected.serial, enable);
-      success = enable ? 'Transparency reduced.' : 'Transparency restored.';
+      success = enable ? i18n.t('Transparency reduced.') : i18n.t('Transparency restored.');
     } catch (e) { errorDisplay = (e as DozeForgeError).message; }
     finally { visualLoadBusy = false; }
   }
@@ -287,7 +303,7 @@
     fixedPerfBusy = true; errorPerf = null; success = null;
     try {
       await api.setFixedPerformanceMode(deviceStore.selected.serial, enable);
-      success = enable ? 'Fixed performance mode ENABLED.' : 'Fixed performance mode DISABLED.';
+      success = enable ? i18n.t('Fixed performance mode ENABLED.') : i18n.t('Fixed performance mode DISABLED.');
     } catch (e) { errorPerf = (e as DozeForgeError).message; }
     finally { fixedPerfBusy = false; }
   }
@@ -298,7 +314,7 @@
     try {
       await api.applyRefreshRate(deviceStore.selected.serial, minRateInput, peakRateInput);
       cache.invalidatePrefix('display:');
-      success = `Refresh rate set: ${minRateInput} – ${peakRateInput} Hz.`;
+      success = i18n.t('Refresh rate set: {{min}} – {{max}} Hz.', { min: minRateInput, max: peakRateInput });
       await fetchDisplay();
     } catch (e) { errorDisplay = (e as DozeForgeError).message; }
     finally { applyBusy = false; }
@@ -312,7 +328,7 @@
       await api.setBluetoothAbsoluteVolume(deviceStore.selected.serial, next);
       cache.invalidatePrefix('display:');
       btAbsVolDisabled = next;
-      success = `Bluetooth Absolute Volume ${next ? 'disabled' : 'enabled'}. Re-pair the device for it to take effect.`;
+      success = i18n.t('Bluetooth Absolute Volume {{state}}. Re-pair the device for it to take effect.', { state: next ? i18n.t('disabled') : i18n.t('enabled') });
       await fetchDisplay();
     } catch (e) { errorDisplay = (e as DozeForgeError).message; }
     finally { audioBusy = false; }
@@ -324,7 +340,7 @@
     try {
       await api.setMasterMono(deviceStore.selected.serial, !display!.master_mono);
       cache.invalidatePrefix('display:');
-      success = `Master Mono ${!display!.master_mono ? 'enabled' : 'disabled'}.`;
+      success = i18n.t('Master Mono {{state}}.', { state: !display!.master_mono ? i18n.t('enabled') : i18n.t('disabled') });
       await fetchDisplay();
     } catch (e) { errorDisplay = (e as DozeForgeError).message; }
     finally { audioBusy = false; }
@@ -336,7 +352,7 @@
     try {
       await api.setSpatialAudio(deviceStore.selected.serial, !display!.spatial_audio_enabled);
       cache.invalidatePrefix('display:');
-      success = `Spatial Audio ${!display!.spatial_audio_enabled ? 'enabled' : 'disabled'}.`;
+      success = i18n.t('Spatial Audio {{state}}.', { state: !display!.spatial_audio_enabled ? i18n.t('enabled') : i18n.t('disabled') });
       await fetchDisplay();
     } catch (e) { errorDisplay = (e as DozeForgeError).message; }
     finally { audioBusy = false; }
@@ -348,7 +364,7 @@
     try {
       await api.setAvrcpVersion(deviceStore.selected.serial, version);
       cache.invalidatePrefix('display:');
-      success = `AVRCP version set to ${version.replace('avrcp', '')}. Re-pair your BT device.`;
+      success = i18n.t('AVRCP version set to {{v}}. Re-pair your BT device.', { v: version.replace('avrcp', '') });
       await fetchDisplay();
     } catch (e) { errorDisplay = (e as DozeForgeError).message; }
     finally { audioBusy = false; }
@@ -436,6 +452,12 @@
               {#if battery.health_percent !== null}
                 <text x="100" y="92" text-anchor="middle" class="big-pct">{Math.round(battery.health_percent)}%</text>
                 <text x="100" y="116" text-anchor="middle" class="big-sub">{i18n.t('capacity')}</text>
+              {:else if battery.level_percent !== null}
+                <!-- Health % needs charge_full_design from sysfs, which many ROMs
+                     (e.g. Nothing) lock behind root. Fall back to live level. -->
+                <text x="100" y="92" text-anchor="middle" class="big-pct">{battery.level_percent}%</text>
+                <text x="100" y="112" text-anchor="middle" class="big-sub">{i18n.t('current level')}</text>
+                <text x="100" y="128" text-anchor="middle" class="big-note">{i18n.t('health needs root')}</text>
               {:else}
                 <text x="100" y="104" text-anchor="middle" class="big-pct big-muted">?</text>
               {/if}
@@ -526,7 +548,13 @@
       <div class="card" style="margin-bottom: 1rem; border-color: var(--warn); background: rgba(245, 158, 11, 0.05);">
         <p class="muted" style="color: var(--warn);">
           <strong style="color: var(--warn);">{i18n.t('No per-app drain data available.')}</strong><br/>
-          {i18n.t('Your device is currently charging or the OEM stripped the battery stats. Showing dummy data below so you can preview the layout. Unplug your device and refresh to see live data.')}
+          {#if drainTimedOut}
+            {i18n.t('Reading the battery stats took too long — it can be slow over Wi-Fi. Press Refresh to retry.')}
+          {:else if battery?.status && battery.status.toLowerCase().includes('charg')}
+            {i18n.t('Your phone is charging. Android only records per-app battery use while on battery — unplug the cable and refresh.')}
+          {:else}
+            {i18n.t('No battery usage was recorded since the last full charge, or this OEM strips these stats. Let the phone run on battery a while, then refresh.')}
+          {/if}
           <br/><br/>
           <strong style="color: var(--warn);">{i18n.t('Tip:')}</strong>
           {i18n.t('Battery stats only exist while the phone is on battery. Connect over wireless debugging (unplugged) instead of USB — then let it discharge a while and refresh.')}
@@ -540,41 +568,6 @@
           <pre style="margin-top: 0.75rem; max-height: 320px; overflow: auto; background: var(--bg-0); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.6rem; font-family: var(--font-mono); font-size: 11px; white-space: pre-wrap; color: var(--fg-2);">{drainDiag}</pre>
         {/if}
       </div>
-      <table class="drain-table">
-        <thead>
-          <tr><th>{i18n.t('App / Package')}</th><th>{i18n.t('Share')}</th><th>{i18n.t('Est. Drain')}</th><th>{i18n.t('Verdict')}</th><th></th></tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td>
-              <AppName package="com.android.systemui" />
-            </td>
-            <td>
-              <div class="share-bar">
-                <div class="share-fill" style="width: 45%; background: var(--warn);"></div>
-                <span class="share-label">45%</span>
-              </div>
-            </td>
-            <td class="mono">245 mAh</td>
-            <td><span class="badge elevated">{i18n.t('Background hog')}</span></td>
-            <td></td>
-          </tr>
-          <tr>
-            <td>
-              <AppName package="com.whatsapp" />
-            </td>
-            <td>
-              <div class="share-bar">
-                <div class="share-fill" style="width: 25%; background: var(--good);"></div>
-                <span class="share-label">25%</span>
-              </div>
-            </td>
-            <td class="mono">130 mAh</td>
-            <td><span class="badge ok">{i18n.t('Legitimate foreground')}</span></td>
-            <td></td>
-          </tr>
-        </tbody>
-      </table>
     {:else}
       <!-- KPI strip -->
       <div class="grid drain-kpi">
@@ -699,19 +692,19 @@
       <div class="card"><Skeleton lines={4} /></div>
     {:else}
       <div class="card">
-        <h3>Current values</h3>
+        <h3>{i18n.t("Current values")}</h3>
         <div class="dns-current">
           <div>
-            <span class="muted small">min:</span>
+            <span class="muted small">{i18n.t("min:")}</span>
             <code class="mono pill">{display.min_refresh_rate ?? '—'} Hz</code>
           </div>
           <div>
-            <span class="muted small">peak:</span>
+            <span class="muted small">{i18n.t("peak:")}</span>
             <code class="mono pill">{display.peak_refresh_rate ?? '—'} Hz</code>
           </div>
           {#if display.max_frame_buffer_buffers !== null}
             <div>
-              <span class="muted small">FB buffers:</span>
+              <span class="muted small">{i18n.t("FB buffers:")}</span>
               <code class="mono pill">{display.max_frame_buffer_buffers}</code>
             </div>
           {/if}
@@ -719,75 +712,71 @@
       </div>
 
       <div class="card" style="margin-top: 1rem;">
-        <h3>Set refresh rate</h3>
+        <h3>{i18n.t("Set refresh rate")}</h3>
         <div class="form-grid two">
           <label>
-            Min refresh rate (Hz)
+            {i18n.t("Min refresh rate (Hz)")}
             <input type="number" step="0.1" min="1" max="240" bind:value={minRateInput} />
           </label>
           <label>
-            Peak refresh rate (Hz)
+            {i18n.t("Peak refresh rate (Hz)")}
             <input type="number" step="0.1" min="1" max="240" bind:value={peakRateInput} />
           </label>
         </div>
         <div class="preset-row">
-          <span class="muted small">Presets:</span>
-          <button onclick={() => setRatePreset(60, 60)}>Fixed 60</button>
+          <span class="muted small">{i18n.t("Presets:")}</span>
+          <button onclick={() => setRatePreset(60, 60)}>{i18n.t("Fixed 60")}</button>
           <button onclick={() => setRatePreset(60, 90)}>60–90 LTPO</button>
           <button onclick={() => setRatePreset(60, 120)}>60–120 LTPO</button>
-          <button onclick={() => setRatePreset(120, 120)}>Fixed 120</button>
-          <button onclick={() => setRatePreset(1, 120)}>1–120 (Pixel max LTPO)</button>
+          <button onclick={() => setRatePreset(120, 120)}>{i18n.t("Fixed 120")}</button>
+          <button onclick={() => setRatePreset(1, 120)}>{i18n.t("1–120 (Pixel max LTPO)")}</button>
         </div>
         <button class="primary" style="margin-top: 1rem;" onclick={applyRefreshRate} disabled={applyBusy}>
-          {applyBusy ? 'Applying…' : 'Apply refresh rate'}
+          {applyBusy ? 'Applying…' : i18n.t("Apply refresh rate")}
         </button>
       </div>
 
       <div class="card" style="margin-top: 1rem;">
-        <h3>Display Overrides (WM)</h3>
-        <p class="muted small" style="margin-bottom: 1rem;">Modify pixel density and internal resolution. Be careful, extreme values can render the UI unusable.</p>
+        <h3>{i18n.t("Display Overrides (WM)")}</h3>
+        <p class="muted small" style="margin-bottom: 1rem;">{i18n.t("Modify pixel density and internal resolution. Be careful, extreme values can render the UI unusable.")}</p>
         
         <div style="display: flex; gap: 1rem; align-items: flex-end; flex-wrap: wrap; margin-bottom: 1rem;">
           <div>
-            <span class="small muted" style="display:block; margin-bottom:0.3rem;">Custom Density (DPI)</span>
+            <span class="small muted" style="display:block; margin-bottom:0.3rem;">{i18n.t("Custom Density (DPI)")}</span>
             <div style="display: flex; gap: 0.5rem; align-items: center;">
               <input type="number" placeholder="e.g. 420" bind:value={customDensity} disabled={applyBusy} style="width: 120px;" />
-              <button class="btn" onclick={applyDensity} disabled={!customDensity || applyBusy}>Set DPI</button>
+              <button class="btn" onclick={applyDensity} disabled={!customDensity || applyBusy}>{i18n.t("Set DPI")}</button>
             </div>
           </div>
           <div>
-            <span class="small muted" style="display:block; margin-bottom:0.3rem;">Custom Resolution</span>
+            <span class="small muted" style="display:block; margin-bottom:0.3rem;">{i18n.t("Custom Resolution")}</span>
             <div style="display: flex; gap: 0.5rem; align-items: center;">
               <input type="text" placeholder="e.g. 1080x2400" bind:value={customResolution} disabled={applyBusy} style="width: 150px;" />
-              <button class="btn" onclick={applyResolution} disabled={!customResolution || applyBusy}>Set Resolution</button>
+              <button class="btn" onclick={applyResolution} disabled={!customResolution || applyBusy}>{i18n.t("Set Resolution")}</button>
             </div>
           </div>
         </div>
 
-        <button class="btn outline" onclick={resetDisplay} disabled={applyBusy}>Restore Default Display Metrics</button>
+        <button class="btn outline" onclick={resetDisplay} disabled={applyBusy}>{i18n.t("Restore Default Display Metrics")}</button>
       </div>
 
       <div class="card" style="margin-top: 1rem;">
-        <h3 style="margin: 0 0 0.75rem;">Reduce Visual Load</h3>
-        <p class="muted small" style="margin: 0 0 1rem;">Disable window blurs and transparency to reduce GPU workload and improve UI responsiveness. Recommended for mid-range and budget devices.</p>
+        <h3 style="margin: 0 0 0.75rem;">{i18n.t("Reduce Visual Load")}</h3>
+        <p class="muted small" style="margin: 0 0 1rem;">{i18n.t("Disable window blurs and transparency to reduce GPU workload and improve UI responsiveness. Recommended for mid-range and budget devices.")}</p>
         <div style="display: flex; gap: 0.5rem;">
-            <button class="btn" onclick={() => toggleWindowBlurs(true)} disabled={visualLoadBusy}>Disable Blurs</button>
-            <button class="btn outline" onclick={() => toggleWindowBlurs(false)} disabled={visualLoadBusy}>Restore Blurs</button>
+            <button class="btn" onclick={() => toggleWindowBlurs(true)} disabled={visualLoadBusy}>{i18n.t("Disable Blurs")}</button>
+            <button class="btn outline" onclick={() => toggleWindowBlurs(false)} disabled={visualLoadBusy}>{i18n.t("Restore Blurs")}</button>
         </div>
         <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem;">
-            <button class="btn" onclick={() => toggleReduceTransparency(true)} disabled={visualLoadBusy}>Reduce Transparency</button>
-            <button class="btn outline" onclick={() => toggleReduceTransparency(false)} disabled={visualLoadBusy}>Restore Transparency</button>
+            <button class="btn" onclick={() => toggleReduceTransparency(true)} disabled={visualLoadBusy}>{i18n.t("Reduce Transparency")}</button>
+            <button class="btn outline" onclick={() => toggleReduceTransparency(false)} disabled={visualLoadBusy}>{i18n.t("Restore Transparency")}</button>
         </div>
       </div>
     {/if}
 
   {:else if tab === 'performance'}
     <div class="card flat banner">
-      <p>
-        Android forwards volume slider input directly to Bluetooth headset firmware.
-        For DACs/DAPs that prefer software volume control (Fiio, Topping, Astell&Kern),
-        disabling Absolute Volume restores Android's own attenuation curve.
-      </p>
+      <p>{i18n.t("Android forwards volume slider input directly to Bluetooth headset firmware. For DACs/DAPs that prefer software volume control (Fiio, Topping, Astell&Kern), disabling Absolute Volume restores Android's own attenuation curve.")}</p>
     </div>
 
     {#if !display}
@@ -795,11 +784,11 @@
     {:else}
       <div class="card audio-card">
         <div>
-          <h3 style="margin: 0 0 0.4rem 0;">Bluetooth Absolute Volume</h3>
+          <h3 style="margin: 0 0 0.4rem 0;">{i18n.t("Bluetooth Absolute Volume")}</h3>
           <p class="muted" style="margin: 0;">
-            Currently:
+            {i18n.t('Currently:')}
             <code class="mono pill" data-state={btAbsVolDisabled ? 'off' : 'on'}>
-              {btAbsVolDisabled ? 'DISABLED (software volume)' : 'ENABLED (Android default)'}
+              {btAbsVolDisabled ? i18n.t("DISABLED (software volume)") : i18n.t("ENABLED (Android default)")}
             </code>
           </p>
         </div>
@@ -808,48 +797,47 @@
           onclick={toggleBtAbsVol}
           disabled={audioBusy}
         >
-          {audioBusy ? '…' : (btAbsVolDisabled ? 'Re-enable' : 'Disable')}
+          {audioBusy ? '…' : (btAbsVolDisabled ? i18n.t("Re-enable") : i18n.t("Disable"))}
         </button>
       </div>
       <p class="muted footnote">
-        ⚠ This setting only takes effect after re-pairing the Bluetooth device.
-        Unpair the headset, toggle airplane mode, then pair again.
+        {i18n.t('⚠ This setting only takes effect after re-pairing the Bluetooth device. Unpair the headset, toggle airplane mode, then pair again.')}
       </p>
 
       <div class="card audio-card" style="margin-top: 1rem;">
         <div>
-          <h3 style="margin: 0 0 0.4rem 0;">Master Mono</h3>
+          <h3 style="margin: 0 0 0.4rem 0;">{i18n.t("Master Mono")}</h3>
           <p class="muted" style="margin: 0;">
-            Currently:
+            {i18n.t('Currently:')}
             <code class="mono pill" data-state={display.master_mono ? 'on' : 'off'}>
-              {display.master_mono ? 'ENABLED (mono output)' : 'DISABLED (stereo — default)'}
+              {display.master_mono ? i18n.t("ENABLED (mono output)") : i18n.t("DISABLED (stereo — default)")}
             </code>
           </p>
-          <p class="muted small" style="margin: 0.35rem 0 0;">Merges left + right channels into one. Useful for single-sided hearing or mono speakers.</p>
+          <p class="muted small" style="margin: 0.35rem 0 0;">{i18n.t("Merges left + right channels into one. Useful for single-sided hearing or mono speakers.")}</p>
         </div>
         <button
           class={display.master_mono ? 'primary' : 'danger'}
           onclick={toggleMasterMono}
           disabled={audioBusy}
         >
-          {audioBusy ? '…' : (display.master_mono ? 'Disable mono' : 'Enable mono')}
+          {audioBusy ? '…' : (display.master_mono ? i18n.t("Disable mono") : i18n.t("Enable mono"))}
         </button>
       </div>
 
       <div class="card audio-card" style="margin-top: 1rem;">
         <div>
-          <h3 style="margin: 0 0 0.4rem 0;">Spatial Audio</h3>
+          <h3 style="margin: 0 0 0.4rem 0;">{i18n.t("Spatial Audio")}</h3>
           <p class="muted" style="margin: 0;">
-            Currently:
+            {i18n.t('Currently:')}
             {#if display.spatial_audio_enabled === null}
-              <code class="mono pill">Not available on this device</code>
+              <code class="mono pill">{i18n.t("Not available on this device")}</code>
             {:else}
               <code class="mono pill" data-state={display.spatial_audio_enabled ? 'on' : 'off'}>
-                {display.spatial_audio_enabled ? 'ENABLED' : 'DISABLED'}
+                {display.spatial_audio_enabled ? i18n.t("ENABLED") : i18n.t("DISABLED")}
               </code>
             {/if}
           </p>
-          <p class="muted small" style="margin: 0.35rem 0 0;">Head-tracking 3D audio processing. Disable if you experience latency or prefer flat stereo output.</p>
+          <p class="muted small" style="margin: 0.35rem 0 0;">{i18n.t("Head-tracking 3D audio processing. Disable if you experience latency or prefer flat stereo output.")}</p>
         </div>
         {#if display.spatial_audio_enabled !== null}
           <button
@@ -857,29 +845,28 @@
             onclick={toggleSpatialAudio}
             disabled={audioBusy}
           >
-            {audioBusy ? '…' : (display.spatial_audio_enabled ? 'Disable' : 'Enable')}
+            {audioBusy ? '…' : (display.spatial_audio_enabled ? i18n.t("Disable") : i18n.t("Enable"))}
           </button>
         {/if}
       </div>
 
       <div class="card" style="margin-top: 1rem; padding: 1.25rem;">
-        <h3 style="margin: 0 0 0.75rem;">AVRCP Version</h3>
+        <h3 style="margin: 0 0 0.75rem;">{i18n.t("AVRCP Version")}</h3>
         <p class="muted small" style="margin: 0 0 0.85rem;">
-          Audio/Video Remote Control Profile version. Higher versions support richer metadata
-          (album art, browsing). Lower versions have broader device compatibility.
-          Currently: <code class="mono pill">{display.avrcp_version ?? 'default'}</code>
+          {i18n.t('Audio/Video Remote Control Profile version. Higher versions support richer metadata (album art, browsing). Lower versions have broader device compatibility.')}
+          {i18n.t('Currently:')} <code class="mono pill">{display.avrcp_version ?? 'default'}</code>
         </p>
         <div class="preset-row">
-          <span class="muted small">Set to:</span>
+          <span class="muted small">{i18n.t("Set to:")}</span>
           <button class:active={display.avrcp_version === 'avrcp13'} onclick={() => setAvrcp('avrcp13')} disabled={audioBusy}>1.3</button>
           <button class:active={display.avrcp_version === 'avrcp14'} onclick={() => setAvrcp('avrcp14')} disabled={audioBusy}>1.4</button>
           <button class:active={display.avrcp_version === 'avrcp15'} onclick={() => setAvrcp('avrcp15')} disabled={audioBusy}>1.5</button>
           <button class:active={display.avrcp_version === 'avrcp16'} onclick={() => setAvrcp('avrcp16')} disabled={audioBusy}>1.6</button>
         </div>
-        <p class="muted footnote">⚠ Requires re-pairing the Bluetooth device to take effect.</p>
+        <p class="muted footnote">{i18n.t("⚠ Requires re-pairing the Bluetooth device to take effect.")}</p>
       </div>
     {/if}
-    <h2 style="margin-top: 2.5rem; margin-bottom: 0.75rem;">System Performance</h2>
+    <h2 style="margin-top: 2.5rem; margin-bottom: 0.75rem;">{i18n.t("System Performance")}</h2>
     <div class="row-actions">
       <button class="primary" onclick={fetchPerf} disabled={loadingPerf}>
         {loadingPerf ? 'Reading…' : 'Refresh'}
@@ -891,40 +878,39 @@
     {:else}
       <div class="grid form-grid two">
         <div class="card" style="padding: 1.25rem;">
-          <h3 style="margin: 0 0 0.75rem;">Animation Scale</h3>
+          <h3 style="margin: 0 0 0.75rem;">{i18n.t("Animation Scale")}</h3>
           <p class="muted small" style="margin: 0 0 0.85rem;">
-            Modifies window, transition, and animator durations. 0.5x makes the device feel significantly faster.
-            Currently: <code class="mono pill">{perfSettings.window_animation_scale ?? '1.0'}x</code>
+            {i18n.t('Modifies window, transition, and animator durations. 0.5x makes the device feel significantly faster.')}
+            {i18n.t('Currently:')} <code class="mono pill">{perfSettings.window_animation_scale ?? '1.0'}x</code>
           </p>
           <div class="preset-row">
-            <button class:active={perfSettings.window_animation_scale === 1.0 || perfSettings.window_animation_scale === null} onclick={() => setAnimScale(1.0)} disabled={perfBusy}>Stock (1.0x)</button>
-            <button class:active={perfSettings.window_animation_scale === 0.5} onclick={() => setAnimScale(0.5)} disabled={perfBusy}>Snappy (0.5x)</button>
-            <button class:active={perfSettings.window_animation_scale === 0.0} onclick={() => setAnimScale(0.0)} disabled={perfBusy}>Instant (0.0x)</button>
+            <button class:active={perfSettings.window_animation_scale === 1.0 || perfSettings.window_animation_scale === null} onclick={() => setAnimScale(1.0)} disabled={perfBusy}>{i18n.t("Stock (1.0x)")}</button>
+            <button class:active={perfSettings.window_animation_scale === 0.5} onclick={() => setAnimScale(0.5)} disabled={perfBusy}>{i18n.t("Snappy (0.5x)")}</button>
+            <button class:active={perfSettings.window_animation_scale === 0.0} onclick={() => setAnimScale(0.0)} disabled={perfBusy}>{i18n.t("Instant (0.0x)")}</button>
           </div>
         </div>
         
         <div class="card" style="padding: 1.25rem;">
-          <h3 style="margin: 0 0 0.75rem;">Fixed Performance Mode</h3>
+          <h3 style="margin: 0 0 0.75rem;">{i18n.t("Fixed Performance Mode")}</h3>
           <p class="muted small" style="margin: 0 0 0.85rem;">
-            Locks CPU/GPU clocks to a high fixed state to prevent thermal throttling. 
-            Use only for gaming sessions. Turn off for normal use.
+            {i18n.t('Locks CPU/GPU clocks to a high fixed state to prevent thermal throttling. Use only for gaming sessions. Turn off for normal use.')}
           </p>
           <div style="display: flex; gap: 0.5rem; margin-top: 1rem;">
-            <button class="btn" onclick={() => toggleFixedPerformanceMode(true)} disabled={fixedPerfBusy}>Enable Fixed Performance</button>
-            <button class="btn outline" onclick={() => toggleFixedPerformanceMode(false)} disabled={fixedPerfBusy}>Disable</button>
+            <button class="btn" onclick={() => toggleFixedPerformanceMode(true)} disabled={fixedPerfBusy}>{i18n.t("Enable Fixed Performance")}</button>
+            <button class="btn outline" onclick={() => toggleFixedPerformanceMode(false)} disabled={fixedPerfBusy}>{i18n.t('Disable')}</button>
           </div>
         </div>
         <div class="card" style="padding: 1.25rem;">
-          <h3 style="margin: 0 0 0.75rem;">Background Process Limit</h3>
+          <h3 style="margin: 0 0 0.75rem;">{i18n.t("Background Process Limit")}</h3>
           <p class="muted small" style="margin: 0 0 0.85rem;">
-            Limits the number of cached background processes. Useful for devices with very low RAM.
-            Currently: <code class="mono pill">{perfSettings.background_process_limit ?? 'Standard'}</code>
+            {i18n.t('Limits the number of cached background processes. Useful for devices with very low RAM.')}
+            {i18n.t('Currently:')} <code class="mono pill">{perfSettings.background_process_limit ?? 'Standard'}</code>
           </p>
           <div class="preset-row">
-            <button class:active={perfSettings.background_process_limit === null} onclick={() => setBgLimit(null)} disabled={perfBusy}>Standard</button>
-            <button class:active={perfSettings.background_process_limit === 4} onclick={() => setBgLimit(4)} disabled={perfBusy}>At most 4</button>
-            <button class:active={perfSettings.background_process_limit === 2} onclick={() => setBgLimit(2)} disabled={perfBusy}>At most 2</button>
-            <button class:active={perfSettings.background_process_limit === 0} onclick={() => setBgLimit(0)} disabled={perfBusy}>No bg processes</button>
+            <button class:active={perfSettings.background_process_limit === null} onclick={() => setBgLimit(null)} disabled={perfBusy}>{i18n.t("Standard")}</button>
+            <button class:active={perfSettings.background_process_limit === 4} onclick={() => setBgLimit(4)} disabled={perfBusy}>{i18n.t("At most 4")}</button>
+            <button class:active={perfSettings.background_process_limit === 2} onclick={() => setBgLimit(2)} disabled={perfBusy}>{i18n.t("At most 2")}</button>
+            <button class:active={perfSettings.background_process_limit === 0} onclick={() => setBgLimit(0)} disabled={perfBusy}>{i18n.t("No bg processes")}</button>
           </div>
         </div>
       </div>
@@ -971,6 +957,7 @@
   .big-pct { font-size: 36px; font-weight: 700; fill: var(--fg-0); font-family: var(--font-mono); letter-spacing: -0.025em; }
   .big-pct.big-muted, .big-num.ring-muted { fill: var(--fg-3); color: var(--fg-3); }
   .big-sub { font-size: 10px; fill: var(--fg-3); text-transform: uppercase; letter-spacing: 0.1em; }
+  .big-note { font-size: 8px; fill: var(--fg-4, var(--fg-3)); text-transform: uppercase; letter-spacing: 0.08em; opacity: 0.7; }
   .legend { display: flex; flex-direction: column; gap: 6px; font-size: var(--font-size-xs); color: var(--fg-2); }
   .legend span { display: flex; align-items: center; gap: 8px; }
   .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }

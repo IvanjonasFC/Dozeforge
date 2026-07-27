@@ -142,8 +142,10 @@ export const api = {
   overviewSnapshot: (serial: string) =>
     call<OverviewSnapshot>('overview_snapshot', { serial }),
 
-  batteryHealth: (serial: string) =>
-    call<BatteryHealth>('battery_health', { serial }),
+  // `deep` runs the extra batterystats capacity fallback (used by the battery
+  // page). Leave false for the frequent heartbeat so it stays cheap.
+  batteryHealth: (serial: string, deep = false) =>
+    call<BatteryHealth>('battery_health', { serial, deep }),
 
   processStatus: (serial: string) =>
     call<ProcessSnapshot>('process_status', { serial }),

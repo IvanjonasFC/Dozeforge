@@ -123,7 +123,7 @@
       const next = !motionDisabled;
       await api.disableDozeMotion(deviceStore.selected.serial, next);
       motionDisabled = next;
-      success = next ? 'Motion sensor detection in Doze DISABLED. Deep sleep will engage even while moving.' : 'Motion sensor detection in Doze RESTORED to default.';
+      success = next ? i18n.t("Motion sensor detection in Doze DISABLED. Deep sleep will engage even while moving.") : i18n.t("Motion sensor detection in Doze RESTORED to default.");
     } catch (e) { error = (e as DozeForgeError).message; }
     finally { motionBusy = false; }
   }
@@ -133,7 +133,7 @@
     heartbeatBusy = true; error = null; success = null;
     try {
       await api.tuneGmsHeartbeat(deviceStore.selected.serial, heartbeatInterval);
-      success = `GMS heartbeat interval set to ${Math.round(heartbeatInterval / 60000)} minutes.`;
+      success = i18n.t('GMS heartbeat interval set to {{min}} minutes.', { min: Math.round(heartbeatInterval / 60000) });
     } catch (e) { error = (e as DozeForgeError).message; }
     finally { heartbeatBusy = false; }
   }
@@ -168,7 +168,7 @@
       await api.setStandbyBucket(deviceStore.selected.serial, pkg, bucket);
       const b = allBuckets.find(x => x.package === pkg);
       if (b) b.bucket = bucket;
-      success = `Priority of ${pkg} changed to ${bucket}`;
+      success = i18n.t('Priority of {{pkg}} changed to {{bucket}}', { pkg, bucket });
     } catch (e) { error = (e as DozeForgeError).message; }
   }
 
@@ -215,12 +215,12 @@
     const isMedia = /spotify|youtube|music|podcast|netflix|deezer|tidal|amazon\.mp3|soundcloud/i.test(
       pkg
     );
-    if (isMedia && wakelockMs > 5 * 60_000) return { tier: 'ok', label: 'Likely legitimate (media)' };
-    if (sensorCount > 0 && wakelockMs > 30 * 60_000) return { tier: 'warn', label: 'Sensor-bound — review' };
-    if (wakelockMs > 30 * 60_000) return { tier: 'bad', label: 'Background hog' };
-    if (liveWakelockSet.has(pkg)) return { tier: 'bad', label: 'Holding wakelock now' };
-    if (wakelockMs > 5 * 60_000) return { tier: 'warn', label: 'Moderate drain' };
-    return { tier: 'ok', label: 'Minor' };
+    if (isMedia && wakelockMs > 5 * 60_000) return { tier: 'ok', label: i18n.t("Likely legitimate (media)") };
+    if (sensorCount > 0 && wakelockMs > 30 * 60_000) return { tier: 'warn', label: i18n.t("Sensor-bound — review") };
+    if (wakelockMs > 30 * 60_000) return { tier: 'bad', label: i18n.t("Background hog") };
+    if (liveWakelockSet.has(pkg)) return { tier: 'bad', label: i18n.t("Holding wakelock now") };
+    if (wakelockMs > 5 * 60_000) return { tier: 'warn', label: i18n.t("Moderate drain") };
+    return { tier: 'ok', label: i18n.t("Minor") };
   }
 
   /** Pixel-width for the timeline bars relative to on_battery_realtime. */
@@ -247,7 +247,7 @@
 </header>
 
 {#if !deviceStore.selected}
-  <div class="card empty"><p class="muted">No device connected.</p></div>
+  <div class="card empty"><p class="muted">{i18n.t('No device connected.')}</p></div>
 {:else}
   {#if success}<div class="success">{success}</div>{/if}
   {#if error}<div class="error">{error}</div>{/if}
@@ -277,7 +277,7 @@
       <div class="timeline">
         <!-- Screen off realtime -->
         <div class="tl-row">
-          <span class="tl-label" title="Wall-clock hours the screen was off, while on battery.">{i18n.t('Screen off')}</span>
+          <span class="tl-label" title={i18n.t("Wall-clock hours the screen was off, while on battery.")}>{i18n.t('Screen off')}</span>
           <div class="tl-bar-wrap">
             <div class="tl-bar tl-screen-off" style="width: {pctOf(timeline.screen_off_realtime_ms, base)}%"></div>
           </div>
@@ -285,7 +285,7 @@
         </div>
         <!-- Deep sleep -->
         <div class="tl-row">
-          <span class="tl-label" title="Time the CPU was actually suspended with screen off. Higher is better.">{i18n.t('Deep sleep')}</span>
+          <span class="tl-label" title={i18n.t("Time the CPU was actually suspended with screen off. Higher is better.")}>{i18n.t('Deep sleep')}</span>
           <div class="tl-bar-wrap">
             <div class="tl-bar tl-deep" style="width: {pctOf(timeline.deep_sleep_ms, base)}%"></div>
           </div>
@@ -293,7 +293,7 @@
         </div>
         <!-- Awake (the leak) -->
         <div class="tl-row">
-          <span class="tl-label" title="Screen was off, but the CPU stayed awake. Every minute here drains battery.">{i18n.t('Awake (screen off)')}</span>
+          <span class="tl-label" title={i18n.t("Screen was off, but the CPU stayed awake. Every minute here drains battery.")}>{i18n.t('Awake (screen off)')}</span>
           <div class="tl-bar-wrap">
             <div class="tl-bar tl-awake" style="width: {pctOf(timeline.screen_off_uptime_ms, base)}%"></div>
           </div>
@@ -301,7 +301,7 @@
         </div>
       </div>
       <p class="muted footnote" style="margin-top: 0.85rem;">
-        Healthy reference: efficiency ≥ 85%, awake-with-screen-off &lt; 15% of screen-off time.
+        {@html i18n.t('Healthy reference: efficiency ≥ 85%, awake-with-screen-off &lt; 15% of screen-off time.')}
       </p>
     {/if}
   </div>
@@ -378,7 +378,7 @@
               {i18n.t('Real-time state of the device idle controller. The device must pass through sensing phases before deep sleep.')}
             </p>
           </div>
-          <button class="secondary" onclick={simulateUnplug} disabled={loading} title="Engaña al sistema haciendo creer que no está conectado al USB">{i18n.t('Simular batería')}</button>
+          <button class="secondary" onclick={simulateUnplug} disabled={loading} title={i18n.t('Tricks the system into thinking it is not plugged into USB')}>{i18n.t('Simulate battery')}</button>
         </div>
         
         <div class="state-machine">
@@ -402,59 +402,57 @@
 
     {#if perfSettings}
       <div class="card" style="padding: 1.25rem;">
-        <h3 style="margin: 0 0 0.75rem;">Aggressive Doze</h3>
+        <h3 style="margin: 0 0 0.75rem;">{i18n.t("Aggressive Doze")}</h3>
         <p class="muted small" style="margin: 0 0 0.85rem;">
-          Forces the device to enter Deep Sleep almost immediately after screen off. Disables motion sensing during doze.
+          {i18n.t('Forces the device to enter Deep Sleep almost immediately after screen off. Disables motion sensing during doze.')}
         </p>
         <button
           class={perfSettings.aggressive_doze_enabled ? 'danger' : 'primary'}
           onclick={toggleDoze}
           disabled={perfBusy}
         >
-          {perfBusy ? '…' : (perfSettings.aggressive_doze_enabled ? 'Disable' : 'Enable Naptime-style Doze')}
+          {perfBusy ? '…' : (perfSettings.aggressive_doze_enabled ? i18n.t("Disable") : i18n.t("Enable Naptime-style Doze"))}
         </button>
       </div>
       <div class="card" style="padding: 1.25rem;">
-        <h3 style="margin: 0 0 0.75rem;">Background Scanning</h3>
+        <h3 style="margin: 0 0 0.75rem;">{i18n.t("Background Scanning")}</h3>
         <p class="muted small" style="margin: 0 0 0.85rem;">
-          Allows apps to scan for Wi-Fi and Bluetooth even when those radios are turned off. Wakes up the device constantly.
+          {i18n.t('Allows apps to scan for Wi-Fi and Bluetooth even when those radios are turned off. Wakes up the device constantly.')}
         </p>
         <button
           class={(perfSettings.wifi_scan_always_enabled || perfSettings.ble_scan_always_enabled) ? 'danger' : 'primary'}
           onclick={toggleBgScan}
           disabled={perfBusy}
         >
-          {perfBusy ? '…' : ((perfSettings.wifi_scan_always_enabled || perfSettings.ble_scan_always_enabled) ? 'Disable Background Scan' : 'Re-enable Background Scan')}
+          {perfBusy ? '…' : ((perfSettings.wifi_scan_always_enabled || perfSettings.ble_scan_always_enabled) ? i18n.t("Disable Background Scan") : i18n.t("Re-enable Background Scan"))}
         </button>
       </div>
       <div class="card" style="padding: 1.25rem;">
-        <h3 style="margin: 0 0 0.75rem;">Motion Sensor Override</h3>
+        <h3 style="margin: 0 0 0.75rem;">{i18n.t("Motion Sensor Override")}</h3>
         <p class="muted small" style="margin: 0 0 0.85rem;">
-          Prevents motion detection from waking the device during Doze. Inspired by Naptime.
-          The device will enter deep sleep even while in your pocket or bag.
+          {i18n.t('Prevents motion detection from waking the device during Doze. Inspired by Naptime. The device will enter deep sleep even while in your pocket or bag.')}
         </p>
         <button
           class={motionDisabled ? 'danger' : 'primary'}
           onclick={toggleDozeMotion}
           disabled={motionBusy}
         >
-          {motionBusy ? '...' : (motionDisabled ? 'Restore Motion Detection' : 'Disable Motion in Doze')}
+          {motionBusy ? '...' : (motionDisabled ? i18n.t("Restore Motion Detection") : i18n.t("Disable Motion in Doze"))}
         </button>
       </div>
       <div class="card" style="padding: 1.25rem;">
-        <h3 style="margin: 0 0 0.75rem;">GMS Heartbeat Interval</h3>
+        <h3 style="margin: 0 0 0.75rem;">{i18n.t("GMS Heartbeat Interval")}</h3>
         <p class="muted small" style="margin: 0 0 0.85rem;">
-          Controls how often Google Play Services wakes the device for Firebase Cloud Messaging.
-          Higher intervals save battery but may delay push notifications.
+          {i18n.t('Controls how often Google Play Services wakes the device for Firebase Cloud Messaging. Higher intervals save battery but may delay push notifications.')}
         </p>
         <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.85rem;">
-          <button class="outline" class:active={heartbeatInterval === 300000} onclick={() => heartbeatInterval = 300000}>5 min</button>
-          <button class="outline" class:active={heartbeatInterval === 900000} onclick={() => heartbeatInterval = 900000}>15 min (default)</button>
-          <button class="outline" class:active={heartbeatInterval === 1800000} onclick={() => heartbeatInterval = 1800000}>30 min</button>
-          <button class="outline" class:active={heartbeatInterval === 3600000} onclick={() => heartbeatInterval = 3600000}>60 min</button>
+          <button class="outline" class:active={heartbeatInterval === 300000} onclick={() => heartbeatInterval = 300000}>{i18n.t("5 min")}</button>
+          <button class="outline" class:active={heartbeatInterval === 900000} onclick={() => heartbeatInterval = 900000}>{i18n.t("15 min (default)")}</button>
+          <button class="outline" class:active={heartbeatInterval === 1800000} onclick={() => heartbeatInterval = 1800000}>{i18n.t("30 min")}</button>
+          <button class="outline" class:active={heartbeatInterval === 3600000} onclick={() => heartbeatInterval = 3600000}>{i18n.t("60 min")}</button>
         </div>
         <button class="primary" onclick={applyHeartbeat} disabled={heartbeatBusy}>
-          {heartbeatBusy ? '...' : 'Apply Heartbeat Interval'}
+          {heartbeatBusy ? '...' : i18n.t("Apply Heartbeat Interval")}
         </button>
       </div>
     {/if}
@@ -465,29 +463,29 @@
   <!-- ============================================================ -->
   <div class="card" style="margin-top: 1rem;">
     <div class="row" style="justify-content: space-between; margin-bottom: 0.85rem; gap: 0.75rem;">
-      <h3 style="margin: 0;">Per-app culprits</h3>
+      <h3 style="margin: 0;">{i18n.t("Per-app culprits")}</h3>
       <input
         type="text"
-        placeholder="Filter by package…"
+        placeholder={i18n.t('Filter by package…')}
         bind:value={filter}
         class="filter-input"
       />
     </div>
     {#if culprits.length === 0}
-      <p class="muted">No significant offenders found.</p>
+      <p class="muted">{i18n.t('No significant offenders found.')}</p>
     {:else}
       <div class="scroll-y" style="max-height: 460px;">
         <table>
           <thead>
             <tr>
-              <th title="Application package name (com.example.app).">Package</th>
-              <th title="Total time the app held a partial wakelock since last unplug. The bigger, the more it kept the CPU running.">Wakelock</th>
-              <th title="Number of times the app woke the device from deep sleep via an alarm.">Wakeups</th>
-              <th title="Background jobs scheduled by the app.">Jobs</th>
-              <th title="Number of sensor handles held by the app (GPS, accelerometer, etc.).">Sensors</th>
-              <th title="If the app reaches a privileged service through GMS, the culprit is reattributed here.">Proxy</th>
-              <th title="Composite score — higher means worse impact.">Score</th>
-              <th title="Human-readable verdict so non-technical users can act.">Verdict</th>
+              <th title={i18n.t("Application package name (com.example.app).")}>{i18n.t("Package")}</th>
+              <th title={i18n.t("Total time the app held a partial wakelock since last unplug. The bigger, the more it kept the CPU running.")}>{i18n.t("Wakelock")}</th>
+              <th title={i18n.t("Number of times the app woke the device from deep sleep via an alarm.")}>{i18n.t("Wakeups")}</th>
+              <th title={i18n.t("Background jobs scheduled by the app.")}>{i18n.t("Jobs")}</th>
+              <th title={i18n.t("Number of sensor handles held by the app (GPS, accelerometer, etc.).")}>{i18n.t("Sensors")}</th>
+              <th title={i18n.t("If the app reaches a privileged service through GMS, the culprit is reattributed here.")}>{i18n.t("Proxy")}</th>
+              <th title={i18n.t("Composite score — higher means worse impact.")}>{i18n.t("Score")}</th>
+              <th title={i18n.t("Human-readable verdict so non-technical users can act.")}>{i18n.t("Verdict")}</th>
             </tr>
           </thead>
           <tbody>
@@ -502,8 +500,8 @@
                 <td class="mono">{sensorCount}</td>
                 <td>
                   {#if c.redirected_from_proxy}
-                    <span class="badge ok" title="reattributed from {c.redirected_from_proxy}">
-                      via {c.redirected_from_proxy.split('.').slice(-1)[0]}
+                    <span class="badge ok" title={i18n.t('reattributed from {{pkg}}', { pkg: c.redirected_from_proxy })}>
+                      {i18n.t('via')} {c.redirected_from_proxy.split('.').slice(-1)[0]}
                     </span>
                   {:else}
                     <span class="muted">—</span>
@@ -514,13 +512,13 @@
                     <strong class="mono">{c.score.toFixed(1)}</strong>
                     {#if appRestrictions[c.package]}
                       {#if appRestrictions[c.package].wake_lock_ignored}
-                        <span class="badge danger" style="font-size: 9px; padding: 2px 4px;">Wake Blocked</span>
+                        <span class="badge danger" style="font-size: 9px; padding: 2px 4px;">{i18n.t("Wake Blocked")}</span>
                       {/if}
                       {#if appRestrictions[c.package].run_in_background_ignored}
-                        <span class="badge danger" style="font-size: 9px; padding: 2px 4px;">Bg Blocked</span>
+                        <span class="badge danger" style="font-size: 9px; padding: 2px 4px;">{i18n.t("Bg Blocked")}</span>
                       {/if}
                       {#if appRestrictions[c.package].standby_bucket === 'restricted'}
-                        <span class="badge ok" style="font-size: 9px; padding: 2px 4px;">Restricted</span>
+                        <span class="badge ok" style="font-size: 9px; padding: 2px 4px;">{i18n.t("Restricted")}</span>
                       {/if}
                     {/if}
                   </div>
@@ -540,26 +538,26 @@
   <div class="card" style="margin-top: 1rem;">
     <div class="row" style="justify-content: space-between; align-items: flex-start; margin-bottom: 0.85rem;">
       <div>
-        <h3 style="margin: 0 0 0.5rem;">Standby Buckets Manager</h3>
+        <h3 style="margin: 0 0 0.5rem;">{i18n.t("Standby Buckets Manager")}</h3>
         <p class="muted small" style="margin: 0; max-width: 600px;">
-          Android assigns priorities (buckets) to apps. 
-          <strong>Active</strong> (no limits), <strong>Working Set</strong> (mild limits), <strong>Frequent</strong> (medium limits), <strong>Rare</strong> (strict limits, rarely connects), <strong>Restricted</strong> (frozen).
+          {i18n.t('Android assigns priorities (buckets) to apps.')}
+          <strong>{i18n.t('Active')}</strong> {i18n.t('(no limits),')} <strong>{i18n.t('Working Set')}</strong> {i18n.t('(mild limits),')} <strong>{i18n.t('Frequent')}</strong> {i18n.t('(medium limits),')} <strong>{i18n.t('Rare')}</strong> {i18n.t('(strict limits, rarely connects),')} <strong>{i18n.t('Restricted')}</strong> {i18n.t('(frozen).')}
         </p>
       </div>
       <button class="secondary" onclick={loadBuckets} disabled={bucketsLoading}>
-        {bucketsLoading ? 'Loading…' : (allBuckets.length ? 'Refresh Buckets' : 'Load Standby Buckets')}
+        {bucketsLoading ? i18n.t("Loading…") : (allBuckets.length ? i18n.t("Refresh Buckets") : i18n.t("Load Standby Buckets"))}
       </button>
     </div>
 
     {#if allBuckets.length > 0}
-      <input type="text" placeholder="Filter apps…" bind:value={bucketsFilter} class="filter-input" style="margin-bottom: 1rem; width: 100%; max-width: 300px;" />
+      <input type="text" placeholder={i18n.t('Filter apps…')} bind:value={bucketsFilter} class="filter-input" style="margin-bottom: 1rem; width: 100%; max-width: 300px;" />
       <div class="scroll-y" style="max-height: 400px;">
         <table>
           <thead>
             <tr>
-              <th>Application</th>
-              <th>Current Bucket</th>
-              <th>Override Bucket</th>
+              <th>{i18n.t("Application")}</th>
+              <th>{i18n.t("Current Bucket")}</th>
+              <th>{i18n.t("Override Bucket")}</th>
             </tr>
           </thead>
           <tbody>
@@ -571,12 +569,12 @@
                 </td>
                 <td>
                   <select onchange={(e) => updateBucket(b.package, e.currentTarget.value)} style="padding: 0.25rem; font-size: 12px; width: auto;">
-                    <option value="" disabled selected>Change...</option>
-                    <option value="active">Active</option>
-                    <option value="working_set">Working Set</option>
-                    <option value="frequent">Frequent</option>
-                    <option value="rare">Rare</option>
-                    <option value="restricted">Restricted</option>
+                    <option value="" disabled selected>{i18n.t("Change...")}</option>
+                    <option value="active">{i18n.t("Active")}</option>
+                    <option value="working_set">{i18n.t("Working Set")}</option>
+                    <option value="frequent">{i18n.t("Frequent")}</option>
+                    <option value="rare">{i18n.t("Rare")}</option>
+                    <option value="restricted">{i18n.t("Restricted")}</option>
                   </select>
                 </td>
               </tr>
@@ -593,10 +591,9 @@
   {#if wakeup}
     <div class="grid two-grid" style="margin-top: 1rem;">
       <div class="card">
-        <h3>Doze whitelist</h3>
+        <h3>{i18n.t("Doze whitelist")}</h3>
         <p class="muted footnote">
-          Apps allowed to bypass deep sleep. Third-party entries are the
-          biggest single drain you can fix.
+          {i18n.t('Apps allowed to bypass deep sleep. Third-party entries are the biggest single drain you can fix.')}
         </p>
         {#if wakeup.doze_whitelist.user_whitelisted.length === 0}
           <p class="muted">{i18n.t('Clean — no user-whitelisted apps bypassing Doze.')}</p>
