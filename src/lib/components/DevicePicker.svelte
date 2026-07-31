@@ -42,6 +42,18 @@
       alert('Failed to connect: ' + err);
     }
   }
+  // Disconnect a device. Wi-Fi (ip:port) endpoints get a real `adb disconnect`;
+  // USB can only be unplugged physically, so we explain that instead.
+  async function disconnect(d: Device, e: MouseEvent) {
+    e.stopPropagation();
+    if (d.serial.includes(':')) {
+      try { await api.adbDisconnect(d.serial); }
+      catch (err) { alert(i18n.t('Failed to disconnect:') + ' ' + err); }
+    } else {
+      alert(i18n.t('USB devices disconnect by unplugging the cable. Tip: enable Wi-Fi (TCP/IP) to manage this phone without a cable.'));
+    }
+    await deviceStore.refresh();
+  }
   function pairService(address: string) {
     open = false;
     pairingAddress = address;
@@ -130,16 +142,34 @@
           {#if deviceStore.devices.length > 0}
             <div class="dd-group">{i18n.t('Connected Devices')}</div>
             {#each deviceStore.devices as device (device.serial)}
-              <button
-                class="dd-item"
-                class:active={deviceStore.selected?.serial === device.serial}
-                role="option"
-                aria-selected={deviceStore.selected?.serial === device.serial}
-                onclick={() => choose(device)}
-              >
-                <span class="state-dot" data-state={device.state}></span>
-                <span class="dd-item-label">{label(device)}</span>
-              </button>
+              <div class="dd-row">
+                <button
+                  class="dd-item grow"
+                  class:active={deviceStore.selected?.serial === device.serial}
+                  role="option"
+                  aria-selected={deviceStore.selected?.serial === device.serial}
+                  onclick={() => choose(device)}
+                >
+                  <span class="state-dot" data-state={device.state}></span>
+                  <span class="dd-item-label">{label(device)}</span>
+                  {#if device.serial.includes(':')}<span class="dd-tag">Wi-Fi</span>{/if}
+                </button>
+                {#if device.serial.includes(':')}
+                  <!-- Only Wi-Fi (TCP) devices can be disconnected by software.
+                       USB devices are unplugged physically — the "Enable TCP/IP"
+                       action below is the path to manage them without a cable. -->
+                  <button
+                    class="dd-x"
+                    title={i18n.t('Disconnect (Wi-Fi)')}
+                    aria-label={i18n.t('Disconnect')}
+                    onclick={(e) => disconnect(device, e)}
+                  >
+                    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>
+                  </button>
+                {:else}
+                  <span class="dd-usb" title={i18n.t('USB — unplug the cable to disconnect')}>USB</span>
+                {/if}
+              </div>
             {/each}
 
             {#if usbDevices.length > 0}
@@ -270,6 +300,22 @@
   .dd-item.sub { color: var(--fg-2); font-weight: 400; font-size: var(--font-size-xs); }
   .dd-item.sub:hover { color: var(--fg-0); }
   .dd-item-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .dd-row { display: flex; align-items: center; gap: 2px; }
+  .dd-item.grow { flex: 1; width: auto; min-width: 0; }
+  .dd-tag { margin-left: 0.4rem; font-size: 9px; font-weight: 700; letter-spacing: 0.05em; color: var(--fg-3); background: var(--bg-3); padding: 1px 5px; border-radius: 5px; flex-shrink: 0; }
+  .dd-x {
+    flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center;
+    width: 28px; height: 28px; padding: 0; background: var(--bg-3); border: 1px solid var(--hairline); border-radius: 8px;
+    color: var(--fg-2); cursor: pointer; transition: background var(--t-fast), color var(--t-fast), border-color var(--t-fast);
+  }
+  .dd-x svg { display: block; width: 13px; height: 13px; }
+  .dd-usb {
+    flex-shrink: 0; font-size: 9px; font-weight: 700; letter-spacing: 0.05em;
+    color: var(--fg-3); background: var(--bg-3); border: 1px solid var(--hairline);
+    padding: 3px 6px; border-radius: 6px; cursor: help;
+  }
+  .dd-x:hover { background: rgba(239, 68, 68, 0.16); border-color: rgba(239, 68, 68, 0.45); color: var(--bad); }
 
   .dd-empty { padding: 0.6rem; color: var(--fg-3); font-size: var(--font-size-sm); }
   .dd-empty.small { font-size: var(--font-size-xs); }

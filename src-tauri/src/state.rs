@@ -49,6 +49,10 @@ impl AppState {
         let ram_stream = new_ram_stream_state();
         let telemetry_history = Arc::new(tokio::sync::Mutex::new(crate::ipc::streams::TelemetryHistory::default()));
 
+        // Optionally load the user-downloaded community bloatware list (GPL-3.0,
+        // never bundled). Missing file = seed-only mode; safe no-op.
+        crate::heuristics::uad_list::load_community_overlay(&data_dir.join("community_bloat.json"));
+
         Ok(Self {
             adb,
             manifest: RwLock::new(manifest),

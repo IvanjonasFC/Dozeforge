@@ -71,6 +71,27 @@ impl AdbInvoker {
         }
     }
 
+    /// Read-only exec with a small retry + backoff for transient ADB flakiness
+    /// (a device momentarily offline, USB re-enumeration, adb server restart).
+    ///
+    /// SAFETY: only for **idempotent read** commands (`devices`, `getprop`,
+    /// `dumpsys`…). Never use for mutations — a retried `flash`/`disable-user`
+    /// that actually succeeded on the first, "timed-out" attempt would double
+    /// apply.
+    pub async fn exec_read(&self, args: &[&str], deadline: Duration) -> Result<String> {
+        let mut last: Result<String> = Err(Error::AdbNotFound);
+        for attempt in 0u32..3 {
+            match self.exec(args, deadline).await {
+                Ok(out) => return Ok(out),
+                Err(e) => {
+                    last = Err(e);
+                    tokio::time::sleep(Duration::from_millis(200 * u64::from(attempt + 1))).await;
+                }
+            }
+        }
+        last
+    }
+
     pub async fn shell_silent(&self, serial: &DeviceSerial, cmd: &str, deadline: Duration) -> Result<()> {
         self.shell(serial, cmd, deadline).await.map(|_| ())
     }

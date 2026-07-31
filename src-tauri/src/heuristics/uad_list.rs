@@ -1,22 +1,25 @@
-//! Cross-reference against the Universal Android Debloater Next Generation
-//! (UAD-NG) community package database.
+//! Bloatware knowledge base with two layers:
 //!
-//! DozeForge's own `bloatware_recommendation` classifier is prefix-based and
-//! works on any device offline. This module adds a second, authoritative
-//! opinion sourced from the community-maintained UAD-NG list: for packages the
-//! community has explicitly reviewed, we trust their `removal` rating over our
-//! heuristic and surface their description.
+//!   1. SEED  — DozeForge's own MIT-licensed curated seed, embedded at compile
+//!              time from `resources/bloatware_seed.json`. Always available.
+//!   2. OVERLAY (optional) — the full community UAD-NG database, which is
+//!              GPL-3.0 and therefore NOT bundled in the binary. Users can
+//!              download it on demand (scripts/sync-uad-list.mjs writes it to
+//!              the app data directory as `community_bloat.json`); when present
+//!              it is loaded at runtime and overlaid on top of the seed.
 //!
-//! The dataset is embedded at compile time from `resources/uad_lists.json`.
-//! Ship the curated subset or drop in the full upstream file — the code is
-//! identical either way (see `scripts/sync-uad-list.mjs`).
+//! This keeps the shipped binary free of GPL data while still letting users opt
+//! into the richer community list. `lookup()` prefers the overlay, then the seed.
 
 use std::collections::HashMap;
+use std::path::Path;
+use std::sync::RwLock;
 
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 
-/// The community removal rating. Ordered from safest to most dangerous.
+/// Removal rating, safest to most dangerous. (Generic risk vocabulary; the seed
+/// is our own data, the optional overlay reuses the same shape for interop.)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub enum UadRemoval {
@@ -37,18 +40,21 @@ pub struct UadEntry {
     pub removal: UadRemoval,
     #[serde(default)]
     pub description: String,
+    /// True when this entry came from the optional community overlay rather than
+    /// our bundled seed. Surfaced to the UI as "community-verified".
+    #[serde(default)]
+    pub community: bool,
 }
 
-const RAW: &str = include_str!("../../resources/uad_lists.json");
+const SEED_RAW: &str = include_str!("../../resources/bloatware_seed.json");
 
-static DB: Lazy<HashMap<String, UadEntry>> = Lazy::new(|| {
-    // The file is a flat map of package -> entry, plus a leading `_meta` object
-    // we skip. Parse into a generic value first so a single malformed/extra
-    // entry (e.g. `_meta`) never poisons the whole table.
-    let root: serde_json::Value = match serde_json::from_str(RAW) {
+/// Parse a `{ package: {list, removal, description} }` map, skipping metadata
+/// keys (those starting with `_`). Tolerant: a single bad entry is skipped.
+fn parse_map(raw: &str, community: bool) -> HashMap<String, UadEntry> {
+    let root: serde_json::Value = match serde_json::from_str(raw) {
         Ok(v) => v,
         Err(e) => {
-            tracing::error!(target: "dozeforge::uad", "uad_lists.json parse error: {e}");
+            tracing::error!(target: "dozeforge::bloat", "bloat list parse error: {e}");
             return HashMap::new();
         }
     };
@@ -60,26 +66,65 @@ static DB: Lazy<HashMap<String, UadEntry>> = Lazy::new(|| {
             continue; // metadata keys
         }
         match serde_json::from_value::<UadEntry>(val.clone()) {
-            Ok(entry) => {
+            Ok(mut entry) => {
+                entry.community = community;
                 out.insert(pkg.clone(), entry);
             }
             Err(e) => {
-                tracing::debug!(target: "dozeforge::uad", "skipping malformed uad entry {pkg}: {e}");
+                tracing::debug!(target: "dozeforge::bloat", "skipping malformed entry {pkg}: {e}");
             }
         }
     }
-    tracing::info!(target: "dozeforge::uad", entries = out.len(), "UAD-NG list loaded");
     out
-});
-
-/// Look up a package in the community database.
-pub fn lookup(package: &str) -> Option<&'static UadEntry> {
-    DB.get(package)
 }
 
-/// Number of loaded community entries (for diagnostics / about screen).
+/// Bundled, MIT-licensed seed. Always present.
+static SEED: Lazy<HashMap<String, UadEntry>> = Lazy::new(|| {
+    let m = parse_map(SEED_RAW, false);
+    tracing::info!(target: "dozeforge::bloat", entries = m.len(), "bloatware seed loaded");
+    m
+});
+
+/// Optional community overlay, populated at runtime from the app data dir.
+static OVERLAY: Lazy<RwLock<HashMap<String, UadEntry>>> =
+    Lazy::new(|| RwLock::new(HashMap::new()));
+
+/// Load the optional community list (GPL-3.0, user-downloaded) from `path` if it
+/// exists. Safe to call at startup; a missing or malformed file is a no-op.
+pub fn load_community_overlay(path: &Path) {
+    let Ok(raw) = std::fs::read_to_string(path) else {
+        return; // not downloaded — seed-only mode
+    };
+    let map = parse_map(&raw, true);
+    if map.is_empty() {
+        return;
+    }
+    if let Ok(mut o) = OVERLAY.write() {
+        let n = map.len();
+        *o = map;
+        tracing::info!(target: "dozeforge::bloat", entries = n, "community overlay loaded");
+    }
+}
+
+/// Look up a package. Prefers the community overlay, then the bundled seed.
+/// Returns an owned entry (the overlay lives behind a lock).
+pub fn lookup(package: &str) -> Option<UadEntry> {
+    if let Ok(o) = OVERLAY.read() {
+        if let Some(e) = o.get(package) {
+            return Some(e.clone());
+        }
+    }
+    SEED.get(package).cloned()
+}
+
+/// Count of known entries (overlay if loaded, else seed). For diagnostics.
 pub fn entry_count() -> usize {
-    DB.len()
+    let overlay = OVERLAY.read().map(|o| o.len()).unwrap_or(0);
+    if overlay > 0 {
+        overlay
+    } else {
+        SEED.len()
+    }
 }
 
 #[cfg(test)]
@@ -87,23 +132,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn embedded_list_loads_and_skips_meta() {
-        // The curated file must parse and contain real entries, not `_meta`.
-        assert!(entry_count() >= 50, "expected a populated list, got {}", entry_count());
+    fn seed_loads_and_skips_meta() {
+        assert!(entry_count() >= 50, "expected a populated seed, got {}", entry_count());
         assert!(lookup("_meta").is_none());
     }
 
     #[test]
     fn known_ad_package_is_recommended() {
-        let e = lookup("com.miui.msa.global").expect("MSA should be in the list");
+        let e = lookup("com.miui.msa.global").expect("MSA should be in the seed");
         assert_eq!(e.removal, UadRemoval::Recommended);
+        assert!(!e.community, "seed entries are not community-flagged");
     }
 
     #[test]
     fn core_package_is_unsafe() {
-        let e = lookup("com.google.android.gms").expect("GMS should be in the list");
+        let e = lookup("com.google.android.gms").expect("GMS should be in the seed");
         assert_eq!(e.removal, UadRemoval::Unsafe);
-        let sysui = lookup("com.android.systemui").expect("SystemUI should be in the list");
+        let sysui = lookup("com.android.systemui").expect("SystemUI should be in the seed");
         assert_eq!(sysui.removal, UadRemoval::Unsafe);
     }
 

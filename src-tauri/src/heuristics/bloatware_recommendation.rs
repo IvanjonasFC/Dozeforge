@@ -74,18 +74,25 @@ pub fn recommend(verdict: &PackageVerdict) -> BloatwareRecommendation {
     let mut notes = base_notes.to_string();
     let mut community_verified = false;
 
-    // Cross-reference the UAD-NG community database. When present, the human-
-    // reviewed removal rating is authoritative and refines our heuristic.
+    // Cross-reference our bloatware knowledge base. The bundled seed (our own
+    // data) refines the recommendation for known packages; the optional,
+    // user-downloaded community overlay (UAD-NG) does the same AND earns the
+    // "community-verified" badge. The seed alone never claims to be community
+    // data.
     if let Some(entry) = crate::heuristics::uad_list::lookup(&verdict.package) {
         use crate::heuristics::uad_list::UadRemoval;
-        community_verified = true;
         recommendation = match entry.removal {
             UadRemoval::Recommended => Recommendation::PreinstalledBloat,
             UadRemoval::Advanced | UadRemoval::Expert => Recommendation::SystemUseWithCare,
             UadRemoval::Unsafe => Recommendation::DoNotTouch,
         };
+        community_verified = entry.community;
         if !entry.description.is_empty() {
-            notes = format!("{} (UAD-NG: {:?})", entry.description, entry.removal);
+            notes = if entry.community {
+                format!("{} (UAD-NG: {:?})", entry.description, entry.removal)
+            } else {
+                entry.description.clone()
+            };
         }
     }
 
@@ -253,7 +260,11 @@ fn classify_by_name(
             "OEM-privileged path. Disabling may break a feature you didn't know depended on it. Test after disabling."),
         RiskTier::Moderate => (None, Recommendation::SafeToDisable,
             "User-installed app. Safe to disable; you can re-enable any time from this page."),
-        RiskTier::Critical => unreachable!("handled at top of recommend()"),
+        // Critical is already handled at the top of recommend(); this arm is a
+        // defensive fallback so a future refactor can never turn it into a panic
+        // (panic=abort would kill the whole app).
+        RiskTier::Critical => (None, Recommendation::SystemUseWithCare,
+            "System-critical package. DozeForge never disables these."),
     }
 }
 
@@ -387,23 +398,25 @@ mod tests {
         let r = recommend(&verdict("com.facebook.katana", RiskTier::Moderate));
         // Category still comes from our prefix classifier.
         assert_eq!(r.category, Some(BloatCategory::PreloadedSocial));
-        // Facebook is in the UAD-NG list (removal=Recommended), so the community
-        // rating refines our verdict and marks it verified.
-        assert!(r.community_verified);
+        // Facebook is in our bundled seed (removal=Recommended), so the seed
+        // refines the verdict to PreinstalledBloat — but the seed is our own
+        // data, so it is NOT flagged community-verified (that badge is reserved
+        // for the optional downloaded UAD-NG overlay).
+        assert!(!r.community_verified);
         assert_eq!(r.recommendation, Recommendation::PreinstalledBloat);
     }
 
     #[test]
-    fn uad_unsafe_downgrades_to_do_not_touch() {
-        // GMS is Moderate/Elevated by uid heuristic in this synthetic verdict,
-        // but UAD marks it Unsafe → must become DoNotTouch and verified.
+    fn seed_unsafe_downgrades_to_do_not_touch() {
+        // GMS is Elevated by uid heuristic in this synthetic verdict, but the
+        // seed marks it Unsafe → must become DoNotTouch (no community badge).
         let r = recommend(&verdict("com.google.android.gms", RiskTier::Elevated));
-        assert!(r.community_verified);
         assert_eq!(r.recommendation, Recommendation::DoNotTouch);
+        assert!(!r.community_verified);
     }
 
     #[test]
-    fn non_uad_package_is_not_verified() {
+    fn non_seed_package_is_not_verified() {
         let r = recommend(&verdict("com.random.indiegame", RiskTier::Moderate));
         assert!(!r.community_verified);
     }

@@ -410,6 +410,21 @@ export const api = {
     
   fastbootFlash: (serial: string, partition: string, imagePath: string) =>
     call<void>('fastboot_flash', { serial, partition, imagePath }),
+
+  fastbootGetvar: (serial: string) =>
+    call<string>('fastboot_getvar', { serial }),
+
+  fastbootSetSlot: (serial: string, slot: string) =>
+    call<void>('fastboot_set_slot', { serial, slot }),
+
+  fastbootBoot: (serial: string, imagePath: string) =>
+    call<void>('fastboot_boot', { serial, imagePath }),
+
+  backupExternalData: (serial: string, pkg: string, destDir: string) =>
+    call<string>('backup_external_data', { serial, package: pkg, destDir }),
+
+  backupSdcard: (serial: string, destDir: string) =>
+    call<string>('backup_sdcard', { serial, destDir }),
     
   getThermalStatus: (serial: string) =>
     callSilent<{ raw_value: number, label: string, temperature: number | null }>('get_thermal_status', { raw_value: -1, label: 'Unknown', temperature: null }, { serial }),
@@ -434,6 +449,9 @@ export const api = {
 
   adbTcpip: (serial: string) =>
     call<string>('adb_tcpip', { serial }),
+
+  adbDisconnect: (address: string) =>
+    call<string>('adb_disconnect', { address }),
 
   launchScrcpy: (serial: string) =>
     call<void>('launch_scrcpy', { serial }),

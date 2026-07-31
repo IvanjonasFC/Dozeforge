@@ -33,7 +33,7 @@ impl AdbClient {
     }
 
     pub async fn list_devices(&self) -> Result<Vec<Device>> {
-        let raw = self.invoker.exec(&["devices", "-l"], DEFAULT_TIMEOUT).await.unwrap_or_default();
+        let raw = self.invoker.exec_read(&["devices", "-l"], DEFAULT_TIMEOUT).await.unwrap_or_default();
         let mut devices = Vec::new();
         for line in raw.lines().skip(1) {
             let line = line.trim();

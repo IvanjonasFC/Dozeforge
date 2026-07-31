@@ -24,6 +24,7 @@
     { id: 'nav:battery',    group: i18n.t('Navigate'), label: i18n.t('Go to Battery'),       hint: i18n.t('health, cycles, sysfs'),            action: () => onNavigate('/battery/') },
     { id: 'nav:storage',    group: i18n.t('Navigate'), label: i18n.t('Go to Storage'),       hint: i18n.t('inventory, trim, dexopt'),          action: () => onNavigate('/storage/') },
     { id: 'nav:safety',     group: i18n.t('Navigate'), label: i18n.t('Go to Profiles & Snapshots'), hint: i18n.t('1-click optimize, undo'),     action: () => onNavigate('/safety/') },
+    { id: 'nav:recovery',   group: i18n.t('Navigate'), label: i18n.t('Go to Recovery'),      hint: i18n.t('reboot modes, sideload, unbrick'), action: () => onNavigate('/recovery/') },
     { id: 'nav:backup',     group: i18n.t('Navigate'), label: i18n.t('Go to Backup & Restore'), hint: i18n.t('encrypted .ab backups'),          action: () => onNavigate('/backup/') },
     { id: 'nav:tweaks',     group: i18n.t('Navigate'), label: i18n.t('Go to Advanced Tweaks'), hint: i18n.t('RAM Plus, phantom limit, …'),      action: () => onNavigate('/tweaks/') },
     { id: 'nav:network',    group: i18n.t('Navigate'), label: i18n.t('Go to Network & DNS'), hint: i18n.t('private DNS, data saver'),          action: () => onNavigate('/network/') },

@@ -17,7 +17,8 @@ pnpm-debug.log*
 
 # ---- Rust / Tauri ----
 src-tauri/target/
-src-tauri/Cargo.lock
+# NOTE: Cargo.lock IS committed on purpose — DozeForge is an application
+# (binary), so a pinned lockfile gives reproducible builds. Do not ignore it.
 src-tauri/WixTools/
 src-tauri/gen/
 **/*.rs.bk
@@ -43,3 +44,10 @@ snapshots/
 exports/
 logs/
 manifests/local-overrides.json
+
+# ---- Local device diagnostic dumps (never commit) ----
+# adb/dumpsys captures generated while debugging on real devices.
+/batterystats.txt
+/*-diag.txt
+/diag-*.txt
+/*.dump.txt

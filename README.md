@@ -20,9 +20,12 @@
 
 ---
 
+> [!WARNING]
+> **Use at your own risk.** DozeForge's core optimizer is no-root and reversible, but the app also ships **advanced power tools** — Recovery (reboot to bootloader, `fastboot flash`, A/B slot switch, OTA sideload) and an optional **Root** tab (CPU governor, I/O scheduler, `setenforce`, cache drop). A wrong or interrupted flash, or misuse of these, can **soft-brick or hard-brick your device, void your warranty, or trip Play Integrity / banking apps**. These features are opt-in and gated behind an unlocked bootloader or granted root. The authors accept **no liability** for any damage. Always have the correct stock firmware for your *exact* model + build before flashing.
+
 ## What is DozeForge
 
-DozeForge is a desktop app (Windows, Tauri 2) that audits and fixes Android battery drain **over ADB, without root**. Instead of guessing "bad apps" from a blocklist, it reads the device's real telemetry, traces the *actual* culprit behind the symptom, applies progressive restrictions using only public Android primitives, and snapshots every change so you can **roll back atomically** — or export the whole plan as a Termux/Shizuku shell script that survives without the PC.
+DozeForge is a cross-platform desktop app (Windows, macOS and Linux; built with Tauri 2) that audits and fixes Android battery drain **over ADB, without root**. Instead of guessing "bad apps" from a blocklist, it reads the device's real telemetry, traces the *actual* culprit behind the symptom, applies progressive restrictions using only public Android primitives, and snapshots every change so you can **roll back atomically** — or export the whole plan as a Termux/Shizuku shell script that survives without the PC.
 
 Modern Android leaks battery because of:
 
@@ -105,7 +108,10 @@ The frontend is pure presentation and does **no** network I/O — even manifest 
 - **Node 22+**
 - **Rust** toolchain (stable) — `winget install Rustlang.Rustup && rustup default stable`
 - **Tauri 2 CLI** — `cargo install tauri-cli --version "^2.0"`
-- **ADB** platform-tools on your `PATH` (a copy also ships with the bundled scrcpy)
+- **ADB** platform-tools on your `PATH` (on Windows a copy also ships with the bundled scrcpy)
+  - **macOS:** `brew install android-platform-tools scrcpy`
+  - **Linux:** `sudo apt install adb fastboot scrcpy` (or your distro's equivalent)
+  - **Windows:** `winget install Google.PlatformTools` (scrcpy is fetched automatically on `npm install`)
 
 ### Install & run (dev)
 
@@ -118,9 +124,14 @@ npm run tauri:dev
 
 ### Build a release bundle
 
-```powershell
+```bash
 npm run tauri:build
 ```
+
+This produces a native installer for the host OS: **NSIS `.exe`** (Windows), **`.dmg`/`.app`** (macOS), and **`.deb`/`.AppImage`** (Linux). CI builds all three on every tagged release.
+
+> [!NOTE]
+> Release binaries are **not code-signed yet**. On Windows, SmartScreen shows *"Windows protected your PC / unknown publisher"* — click **More info → Run anyway**. On macOS, Gatekeeper may need **right-click → Open** (or `xattr -dr com.apple.quarantine DozeForge.app`). This is expected for an unsigned open-source build; verify the checksums published on the Releases page.
 
 App icons live in `src-tauri/icons/` (already committed); see `src-tauri/icons/README.md` to regenerate them from a single PNG.
 
@@ -141,13 +152,16 @@ At runtime, `resolve_scrcpy()` prefers the bundled copy, then a `scrcpy/` folder
 
 ## Safety model
 
-DozeForge **never**:
+The **core optimizer** (Overview, Battery, Doze & Sleep, Advanced Tweaks, App Manager, Backup) **never**:
 
 - Runs as root or asks for root.
 - Touches packages with `uid < 10000`.
 - Touches anything under `/system`, `/vendor`, or `/apex`.
 - Applies a destructive command without first snapshotting the affected appops/buckets.
 - Restores a snapshot when `sdk_int` differs from the snapshot's `sdk_int` (a change in `security_patch_month` within the same SDK is allowed).
+
+> [!IMPORTANT]
+> The **Recovery** page and the optional **Root** tab are separate, advanced tools that deliberately step outside the guarantees above — `fastboot flash`, A/B slot switching, OTA sideload, `setenforce`, and kernel sysfs writes. They are **opt-in**, gated behind an unlocked bootloader or granted root, and clearly labelled with a `root` tag. Use them only if you understand the consequences (see the disclaimer at the top of this README).
 
 <details>
 <summary>Project structure</summary>
@@ -194,7 +208,7 @@ dozeforge/
 
 ## Roadmap
 
-- [ ] macOS / Linux desktop builds
+- [x] macOS / Linux desktop builds (CI matrix — beta)
 - [ ] Signed, auto-updating manifest of known offenders
 - [ ] Scheduled/automated audits per device
 - [ ] Expanded fleet actions and profiles
@@ -202,4 +216,7 @@ dozeforge/
 
 ## License
 
-Distributed under the [MIT](LICENSE) license.
+Distributed under the [MIT](LICENSE) license. Bundled third-party components are
+listed in [NOTICE](NOTICE). DozeForge ships its own MIT-licensed bloatware seed;
+the GPL-3.0 UAD-NG community list is **not** bundled — users can optionally fetch
+it at runtime with `scripts/sync-uad-list.mjs`. See NOTICE for details.

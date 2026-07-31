@@ -13,6 +13,16 @@
 
   let { children } = $props();
 
+  // One-time first-run safety disclaimer (persisted in localStorage).
+  let showDisclaimer = $state(false);
+  onMount(() => {
+    try { if (localStorage.getItem('df_disclaimer_v1') !== '1') showDisclaimer = true; } catch { /* storage blocked */ }
+  });
+  function ackDisclaimer() {
+    try { localStorage.setItem('df_disclaimer_v1', '1'); } catch { /* ignore */ }
+    showDisclaimer = false;
+  }
+
   type NavItem = { href: string; label: string; icon: string };
   type NavSection = { label: string; items: NavItem[] };
 
@@ -31,6 +41,7 @@
     telemetry: '<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>',
     tools: '<polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>',
     safety: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/>',
+    recovery: '<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/><line x1="4.93" y1="4.93" x2="9.17" y2="9.17"/><line x1="14.83" y1="14.83" x2="19.07" y2="19.07"/><line x1="14.83" y1="9.17" x2="19.07" y2="4.93"/><line x1="4.93" y1="19.07" x2="9.17" y2="14.83"/>',
     toolbox: '<path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6a2 2 0 0 1-2.8-2.8z"/>',
     tweaks: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>'
   };
@@ -54,7 +65,8 @@
       { href: '/backup/',    label: 'Backup & Restore', icon: ICON.backup }
     ]},
     { label: 'Safety', items: [
-      { href: '/safety/',    label: 'Profiles & Snapshots', icon: ICON.safety }
+      { href: '/safety/',    label: 'Profiles & Snapshots', icon: ICON.safety },
+      { href: '/recovery/',  label: 'Recovery',             icon: ICON.recovery }
     ]},
     { label: 'Diagnostics', items: [
       { href: '/telemetry/', label: 'Telemetry',     icon: ICON.telemetry },
@@ -120,11 +132,7 @@
     <div class="brand" data-tauri-drag-region>
       <a href="/" class="brand-link" title="DozeForge">
         <span class="brand-mark" aria-hidden="true">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="url(#dfg)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-            <defs><linearGradient id="dfg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#FF6B00"/><stop offset="1" stop-color="#FF3C00"/></linearGradient></defs>
-            <path d="M4 15h6v-3h7c-1 4-4 6-8 6v3h5v2H6v-2h3v-3c-3 0-5-1-5-3z"/>
-            <path d="M9 10 15 4l2 4"/>
-          </svg>
+          <img src="/logo.png?v=5" width="28" height="28" alt="DozeForge" />
         </span>
         {#if !collapsed}<span class="brand-text">DozeForge</span>{/if}
       </a>
@@ -247,6 +255,17 @@
   <CommandPalette bind:open={paletteOpen} onNavigate={(href) => { paletteOpen = false; goto(href); }} />
   <AppDetailsModal />
 
+  {#if showDisclaimer}
+    <div class="disclaimer-backdrop" role="dialog" aria-modal="true">
+      <div class="disclaimer-box">
+        <h2>{i18n.t('Before you start')}</h2>
+        <p>{i18n.t("DozeForge's core optimizer is no-root and reversible. But the Recovery and Root tools can flash partitions, switch slots, set SELinux permissive and write to the kernel.")}</p>
+        <p class="warn">{i18n.t('Misuse — or a wrong or interrupted flash — can brick your device, void your warranty, or break banking apps. Use it at your own risk; the authors accept no liability.')}</p>
+        <button class="primary" onclick={ackDisclaimer}>{i18n.t('I understand and accept')}</button>
+      </div>
+    </div>
+  {/if}
+
   {#if !maximized}
     <!-- Frameless window resize handles (edges + corners). -->
     <div class="rz rz-t"  onmousedown={() => startResize('North')}     role="presentation"></div>
@@ -261,6 +280,20 @@
 </div>
 
 <style>
+  .disclaimer-backdrop {
+    position: fixed; inset: 0; z-index: 3000;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(0, 0, 0, 0.62); backdrop-filter: blur(2px); padding: 1.5rem;
+  }
+  .disclaimer-box {
+    max-width: 460px; background: var(--bg-2); border: 1px solid var(--border-strong);
+    border-radius: 16px; padding: 1.5rem; box-shadow: var(--shadow-lg);
+  }
+  .disclaimer-box h2 { margin: 0 0 0.7rem; font-size: 1.2rem; color: var(--fg-0); letter-spacing: -0.02em; }
+  .disclaimer-box p { margin: 0 0 0.7rem; font-size: var(--font-size-sm); color: var(--fg-2); line-height: 1.55; }
+  .disclaimer-box p.warn { color: var(--warn); }
+  .disclaimer-box .primary { width: 100%; margin-top: 0.5rem; }
+
   .app {
     display: flex;
     height: 100vh;

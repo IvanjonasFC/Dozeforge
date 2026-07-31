@@ -2502,6 +2502,13 @@ pub async fn launch_scrcpy(
 ) -> std::result::Result<(), IpcError> {
     let serial = checked_serial(&serial)?;
     let program = resolve_scrcpy(&app).unwrap_or_else(|| std::path::PathBuf::from(scrcpy_binary_name()));
+    let install_hint = if cfg!(target_os = "macos") {
+        "`brew install scrcpy`"
+    } else if cfg!(target_os = "linux") {
+        "`sudo apt install scrcpy` (o el paquete de tu distro)"
+    } else {
+        "`winget install --id Genymobile.scrcpy` (o `scoop install scrcpy`)"
+    };
     std::process::Command::new(&program)
         .arg("-s")
         .arg(serial.as_str())
@@ -2513,7 +2520,7 @@ pub async fn launch_scrcpy(
         .map_err(|e| IpcError {
             kind: "scrcpy_error".into(),
             message: format!(
-                "No se pudo iniciar scrcpy ({e}). Instálalo con `winget install --id Genymobile.scrcpy` (o `scoop install scrcpy`), o copia la carpeta de scrcpy junto a DozeForge en una subcarpeta `scrcpy/`."
+                "No se pudo iniciar scrcpy ({e}). Instálalo con {install_hint}, o coloca scrcpy en el PATH o en una subcarpeta `scrcpy/` junto a DozeForge."
             ),
         })?;
     Ok(())
@@ -2550,33 +2557,103 @@ pub async fn extract_apk(
     std::fs::create_dir_all(&temp_dir).unwrap_or_default();
 
     for path in &paths {
-        state.adb.invoker.exec(&["-s", serial.as_str(), "pull", path, temp_dir.to_str().unwrap()], std::time::Duration::from_secs(120)).await.map_err(IpcError::from)?;
+        state.adb.invoker.exec(&["-s", serial.as_str(), "pull", path, temp_dir.to_string_lossy().as_ref()], std::time::Duration::from_secs(120)).await.map_err(IpcError::from)?;
     }
 
     let file = std::fs::File::create(&save_path).map_err(|e| IpcError { kind: "fs_error".into(), message: e.to_string() })?;
     let mut zip = zip::ZipWriter::new(file);
     let options = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
 
-    for entry in std::fs::read_dir(&temp_dir).unwrap() {
-        let entry = entry.unwrap();
+    let dir = std::fs::read_dir(&temp_dir).map_err(|e| IpcError { kind: "fs_error".into(), message: e.to_string() })?;
+    for entry in dir {
+        let entry = match entry { Ok(e) => e, Err(_) => continue };
         let path = entry.path();
         if path.is_file() {
-            let filename = path.file_name().unwrap().to_str().unwrap();
-            zip.start_file(filename, options).unwrap();
-            let mut f = std::fs::File::open(&path).unwrap();
+            let Some(filename) = path.file_name().and_then(|n| n.to_str()) else { continue };
+            zip.start_file(filename, options).map_err(|e| IpcError { kind: "zip_error".into(), message: e.to_string() })?;
+            let mut f = std::fs::File::open(&path).map_err(|e| IpcError { kind: "fs_error".into(), message: e.to_string() })?;
             let mut buffer = Vec::new();
-            std::io::Read::read_to_end(&mut f, &mut buffer).unwrap();
-            std::io::Write::write_all(&mut zip, &buffer).unwrap();
+            std::io::Read::read_to_end(&mut f, &mut buffer).map_err(|e| IpcError { kind: "fs_error".into(), message: e.to_string() })?;
+            std::io::Write::write_all(&mut zip, &buffer).map_err(|e| IpcError { kind: "fs_error".into(), message: e.to_string() })?;
         }
     }
 
-    zip.start_file("install_me.bat", options).unwrap();
-    std::io::Write::write_all(&mut zip, b"@echo off\r\ncd /d \"%~dp0\"\r\necho Installing App Bundle...\r\nadb install-multiple *.apk\r\npause").unwrap();
+    zip.start_file("install_me.bat", options).map_err(|e| IpcError { kind: "zip_error".into(), message: e.to_string() })?;
+    std::io::Write::write_all(&mut zip, b"@echo off\r\ncd /d \"%~dp0\"\r\necho Installing App Bundle...\r\nadb install-multiple *.apk\r\npause").map_err(|e| IpcError { kind: "fs_error".into(), message: e.to_string() })?;
     
-    zip.finish().unwrap();
+    zip.finish().map_err(|e| IpcError { kind: "zip_error".into(), message: e.to_string() })?;
     let _ = std::fs::remove_dir_all(&temp_dir);
 
     Ok(format!("App Bundle extracted to {}", save_path))
+}
+
+/// Pulls an app's externally-accessible data — OBB/expansion files and the
+/// `/sdcard/Android/data/<pkg>` tree — into `dest_dir`. Best-effort: folders
+/// that scoped storage blocks (Android 11+) are skipped without failing. This
+/// captures game data and media that the APK/.ab backups miss, no root needed.
+#[tauri::command]
+pub async fn backup_external_data(
+    state: State<'_, Arc<AppState>>,
+    serial: String,
+    package: String,
+    dest_dir: String,
+) -> std::result::Result<String, IpcError> {
+    let serial = checked_serial(&serial)?;
+    crate::security::validate_pkg(&package)?;
+    if dest_dir.is_empty() || dest_dir.len() > 4096 {
+        return Err(IpcError { kind: "invalid_input".into(), message: "invalid dest_dir".into() });
+    }
+    let _ = std::fs::create_dir_all(&dest_dir);
+    let dest = std::path::Path::new(&dest_dir);
+    let mut pulled: u32 = 0;
+    for sub in ["obb", "data"] {
+        let remote = format!("/sdcard/Android/{}/{}", sub, package);
+        let check = state
+            .adb
+            .invoker
+            .shell(&serial, &format!("ls -A \"{}\" 2>/dev/null | head -n1", remote), Duration::from_secs(8))
+            .await
+            .unwrap_or_default();
+        if check.trim().is_empty() {
+            continue;
+        }
+        let local = dest.join(sub);
+        let _ = std::fs::create_dir_all(&local);
+        let local_str = local.to_string_lossy();
+        if state
+            .adb
+            .invoker
+            .exec(&["-s", serial.as_str(), "pull", &remote, local_str.as_ref()], Duration::from_secs(600))
+            .await
+            .is_ok()
+        {
+            pulled += 1;
+        }
+    }
+    Ok(format!("external data folders captured: {}", pulled))
+}
+
+/// Pulls the whole internal storage (`/sdcard`) into `dest_dir` — photos, videos,
+/// documents, downloads, WhatsApp media, etc. A real "whole phone content" backup,
+/// no root. Excludes app private data (`/data/data`), which needs root/Shizuku.
+#[tauri::command]
+pub async fn backup_sdcard(
+    state: State<'_, Arc<AppState>>,
+    serial: String,
+    dest_dir: String,
+) -> std::result::Result<String, IpcError> {
+    let serial = checked_serial(&serial)?;
+    if dest_dir.is_empty() || dest_dir.len() > 4096 {
+        return Err(IpcError { kind: "invalid_input".into(), message: "invalid dest_dir".into() });
+    }
+    let _ = std::fs::create_dir_all(&dest_dir);
+    let out = state
+        .adb
+        .invoker
+        .exec(&["-s", serial.as_str(), "pull", "-a", "/sdcard", dest_dir.as_str()], Duration::from_secs(3600))
+        .await
+        .map_err(IpcError::from)?;
+    Ok(out)
 }
 
 
@@ -3021,7 +3098,76 @@ pub async fn fastboot_flash(
     if image_path.is_empty() || image_path.len() > 4096 {
         return Err(IpcError { kind: "invalid_input".into(), message: "invalid image_path".into() });
     }
-    tokio::time::timeout(std::time::Duration::from_secs(300), tokio::process::Command::new("fastboot").arg("-s").arg(serial.as_str()).arg("flash").arg(partition).arg(image_path).output()).await.map_err(|e| IpcError { kind: "fastboot_error".into(), message: format!("Timeout: {}", e) })?.map_err(|e| IpcError { kind: "fastboot_error".into(), message: format!("Exec failed: {}", e) })?;
+    let out = tokio::time::timeout(std::time::Duration::from_secs(300), tokio::process::Command::new("fastboot").arg("-s").arg(serial.as_str()).arg("flash").arg(partition).arg(image_path).output()).await.map_err(|e| IpcError { kind: "fastboot_error".into(), message: format!("Timeout: {}", e) })?.map_err(|e| IpcError { kind: "fastboot_error".into(), message: format!("Exec failed: {}", e) })?;
+    if !out.status.success() {
+        return Err(IpcError { kind: "fastboot_error".into(), message: format!("fastboot: {}", String::from_utf8_lossy(&out.stderr).trim()) });
+    }
+    Ok(())
+}
+
+/// Reads fastboot variables (unlock status, current slot, product) for diagnosis.
+/// `fastboot getvar all` prints to stderr, so we capture both streams.
+#[tauri::command]
+pub async fn fastboot_getvar(
+    serial: String,
+) -> std::result::Result<String, IpcError> {
+    let serial = checked_serial(&serial)?;
+    let out = tokio::time::timeout(
+        std::time::Duration::from_secs(20),
+        tokio::process::Command::new("fastboot").arg("-s").arg(serial.as_str()).arg("getvar").arg("all").output(),
+    )
+    .await
+    .map_err(|e| IpcError { kind: "fastboot_error".into(), message: format!("Timeout: {}", e) })?
+    .map_err(|e| IpcError { kind: "fastboot_error".into(), message: format!("Exec failed: {}", e) })?;
+    let mut text = String::from_utf8_lossy(&out.stderr).into_owned();
+    text.push_str(&String::from_utf8_lossy(&out.stdout));
+    Ok(text)
+}
+
+/// Switches the active A/B slot — the most common fastboot bootloop fix.
+/// `slot` must be exactly "a" or "b".
+#[tauri::command]
+pub async fn fastboot_set_slot(
+    serial: String,
+    slot: String,
+) -> std::result::Result<(), IpcError> {
+    let serial = checked_serial(&serial)?;
+    if slot != "a" && slot != "b" {
+        return Err(IpcError { kind: "invalid_input".into(), message: "slot must be 'a' or 'b'".into() });
+    }
+    let out = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        tokio::process::Command::new("fastboot").arg("-s").arg(serial.as_str()).arg(format!("--set-active={}", slot)).output(),
+    )
+    .await
+    .map_err(|e| IpcError { kind: "fastboot_error".into(), message: format!("Timeout: {}", e) })?
+    .map_err(|e| IpcError { kind: "fastboot_error".into(), message: format!("Exec failed: {}", e) })?;
+    if !out.status.success() {
+        return Err(IpcError { kind: "fastboot_error".into(), message: format!("fastboot: {}", String::from_utf8_lossy(&out.stderr).trim()) });
+    }
+    Ok(())
+}
+
+/// Boots an image (e.g. a recovery like TWRP) once, without flashing it.
+#[tauri::command]
+pub async fn fastboot_boot(
+    serial: String,
+    image_path: String,
+) -> std::result::Result<(), IpcError> {
+    let serial = checked_serial(&serial)?;
+    if image_path.is_empty() || image_path.len() > 4096 {
+        return Err(IpcError { kind: "invalid_input".into(), message: "invalid image_path".into() });
+    }
+    let out = tokio::time::timeout(
+        std::time::Duration::from_secs(120),
+        tokio::process::Command::new("fastboot").arg("-s").arg(serial.as_str()).arg("boot").arg(image_path).output(),
+    )
+    .await
+    .map_err(|e| IpcError { kind: "fastboot_error".into(), message: format!("Timeout: {}", e) })?
+    .map_err(|e| IpcError { kind: "fastboot_error".into(), message: format!("Exec failed: {}", e) })?;
+    if !out.status.success() {
+        return Err(IpcError { kind: "fastboot_error".into(), message: format!("fastboot: {}", String::from_utf8_lossy(&out.stderr).trim()) });
+    }
     Ok(())
 }
 
@@ -3124,6 +3270,19 @@ pub async fn adb_tcpip(
     crate::security::validate_serial(&serial)?;
     let out = state.adb.invoker.exec(&["-s", &serial, "tcpip", "5555"], std::time::Duration::from_secs(10)).await.map_err(IpcError::from)?;
     Ok(out)
+}
+
+/// Disconnect a wireless (TCP/IP) device. `address` is the `ip:port` shown in
+/// the picker. USB devices cannot be disconnected in software — the UI only
+/// offers this for network endpoints.
+#[tauri::command]
+pub async fn adb_disconnect(
+    state: State<'_, Arc<AppState>>,
+    address: String,
+) -> std::result::Result<String, IpcError> {
+    crate::security::validate_serial(&address)?;
+    let out = state.adb.invoker.exec(&["disconnect", &address], std::time::Duration::from_secs(10)).await.map_err(IpcError::from)?;
+    Ok(out.trim().to_string())
 }
 
 #[tauri::command]

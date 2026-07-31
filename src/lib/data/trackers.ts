@@ -1,7 +1,10 @@
-// Offline, curated subset of the Exodus Privacy tracker database. Each entry's
-// `signature` is a class/package prefix that, when present in an app's declared
-// components (from `dumpsys package`), indicates the tracker SDK is bundled.
-// Heuristic (component-based, not a full dex scan) but catches the common ones.
+// DozeForge's own list of well-known third-party SDK package signatures. Each
+// `signature` is the public, factual package/class prefix these widely-used SDKs
+// ship under (e.g. Firebase Analytics is `com.google.firebase.analytics`); when
+// such a prefix appears in an app's declared components (from `dumpsys package`),
+// the SDK is bundled. These identifiers are public facts, independently compiled
+// here — this is NOT the Exodus Privacy database. It's a component-based
+// heuristic (not a full dex scan) that catches the common trackers.
 
 export type Tracker = { name: string; category: string; signature: string };
 

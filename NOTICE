@@ -1,0 +1,68 @@
+DozeForge
+Copyright (c) 2026 DozeForge Contributors
+Licensed under the MIT License (see the LICENSE file).
+
+This product relies on, and (on Windows) bundles, third-party software.
+The following notices are provided for attribution and license compliance.
+
+================================================================================
+scrcpy
+    https://github.com/Genymobile/scrcpy
+    Copyright (C) 2018 Genymobile
+    Author: Romain Vimont
+    Licensed under the Apache License, Version 2.0.
+
+    The Windows installer bundles an unmodified, official scrcpy release,
+    downloaded at build time by scripts/setup-scrcpy.mjs. On macOS and Linux
+    no binary is bundled: DozeForge resolves a system-installed `scrcpy`
+    found on PATH (e.g. `brew install scrcpy`, `apt install scrcpy`).
+
+    A copy of the Apache License 2.0 is available at:
+    https://www.apache.org/licenses/LICENSE-2.0
+
+================================================================================
+Android SDK Platform-Tools (adb, fastboot)
+    https://developer.android.com/tools/releases/platform-tools
+    Copyright (C) The Android Open Source Project.
+
+    DozeForge does NOT redistribute the Android Platform-Tools. It detects an
+    existing `adb` / `fastboot` on your PATH or under $ANDROID_HOME, which you
+    install and license separately from Google under the Android SDK terms.
+
+================================================================================
+Fonts (Inter, Geist, Space Grotesk, JetBrains Mono)
+    Bundled webfonts are distributed under the SIL Open Font License 1.1.
+    https://openfontlicense.org
+
+================================================================================
+Universal Android Debloater Next Generation (UAD-NG) — package database
+    https://github.com/Universal-Debloater-Alliance/universal-android-debloater-next-generation
+    Licensed under the GNU General Public License v3.0 (GPL-3.0).
+
+    NOT REDISTRIBUTED. DozeForge does NOT bundle the GPL-3.0 UAD-NG database in
+    its binary or repository. DozeForge ships only its own MIT-licensed seed
+    (src-tauri/resources/bloatware_seed.json), which is original data authored by
+    the DozeForge project.
+
+    Users may OPTIONALLY download the full UAD-NG community list themselves by
+    running scripts/sync-uad-list.mjs, which writes it to the local app data
+    directory (community_bloat.json). DozeForge loads that user-provided file at
+    runtime as an overlay. The GPL-3.0 data therefore never forms part of a
+    distributed DozeForge build; it is a runtime add-on obtained by the user
+    directly from the UAD-NG project under GPL-3.0.
+
+================================================================================
+Tracker SDK signatures (independent list)
+    DozeForge's tracker scanner (src/lib/data/trackers.ts) uses a small list of
+    well-known third-party SDK package prefixes (e.g. com.google.firebase.analytics,
+    io.sentry). These are public, factual identifiers, independently compiled by
+    the DozeForge project. This list is NOT derived from, and does not include,
+    the Exodus Privacy (εxodus) database. Exodus Privacy (https://exodus-privacy.eu.org/)
+    is acknowledged as a pioneering project in this space, but none of its
+    AGPL-licensed data is used or redistributed here.
+
+================================================================================
+This project is built with Tauri, Rust and SvelteKit, whose dependencies carry
+their own permissive licenses (MIT / Apache-2.0). Run `cargo license` and
+`npm run license-check` (or `license-checker`) to regenerate the full
+dependency license inventory.

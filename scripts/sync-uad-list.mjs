@@ -1,28 +1,48 @@
 #!/usr/bin/env node
 /**
- * Sync the full Universal Android Debloater Next Generation (UAD-NG) package
- * database into src-tauri/resources/uad_lists.json.
+ * Download the full Universal Android Debloater Next Generation (UAD-NG)
+ * community package database into DozeForge's app data directory as
+ * `community_bloat.json`.
  *
- * DozeForge embeds this file at compile time (heuristics/uad_list.rs). Shipping
- * a curated subset keeps the repo light; run this to swap in the complete
- * community list (~3000 packages) before a release build.
+ * IMPORTANT: the UAD-NG list is GPL-3.0. DozeForge itself is MIT and ships only
+ * its own seed (src-tauri/resources/bloatware_seed.json). This script does NOT
+ * write into the repo or the binary — it writes to your local app data dir, so
+ * the GPL data stays a user-provided runtime overlay and is never redistributed
+ * inside the DozeForge binary. DozeForge loads it automatically on next launch
+ * and overlays it on top of the bundled seed.
  *
  * Usage:  node scripts/sync-uad-list.mjs
  *
  * Requires Node 18+ (global fetch). No dependencies.
  */
-import { writeFile } from 'node:fs/promises';
-import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
+import { writeFile, mkdir } from 'node:fs/promises';
+import { homedir, platform } from 'node:os';
+import { join } from 'node:path';
 
 const UPSTREAM =
   'https://raw.githubusercontent.com/Universal-Debloater-Alliance/universal-android-debloater-next-generation/main/resources/assets/uad_lists.json';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const OUT = join(__dirname, '..', 'src-tauri', 'resources', 'uad_lists.json');
+// Must match tauri.conf.json "identifier".
+const APP_ID = 'io.forgeandroid.app';
+
+/** Resolve Tauri's app_data_dir for the current OS. */
+function appDataDir() {
+  const home = homedir();
+  switch (platform()) {
+    case 'win32':
+      return join(process.env.APPDATA || join(home, 'AppData', 'Roaming'), APP_ID);
+    case 'darwin':
+      return join(home, 'Library', 'Application Support', APP_ID);
+    default: // linux and others
+      return join(process.env.XDG_DATA_HOME || join(home, '.local', 'share'), APP_ID);
+  }
+}
 
 async function main() {
-  console.log(`Fetching UAD-NG list…\n  ${UPSTREAM}`);
+  const dir = appDataDir();
+  const out = join(dir, 'community_bloat.json');
+
+  console.log(`Fetching UAD-NG community list (GPL-3.0)…\n  ${UPSTREAM}`);
   const res = await fetch(UPSTREAM, { headers: { 'User-Agent': 'DozeForge-sync' } });
   if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
 
@@ -39,7 +59,6 @@ async function main() {
     throw new Error(`Sanity check failed: only ${count} packages parsed. Aborting.`);
   }
 
-  // Preserve provenance for the About screen / audit.
   data._meta = {
     source: 'Universal Android Debloater Next Generation (UAD-NG)',
     source_url:
@@ -47,15 +66,17 @@ async function main() {
     license: 'GPL-3.0',
     synced_at: new Date().toISOString(),
     package_count: count,
+    note: 'User-downloaded runtime overlay. Not part of the DozeForge binary.',
   };
 
-  await writeFile(OUT, JSON.stringify(data, null, 0) + '\n', 'utf8');
-  console.log(`✓ Wrote ${count} packages to\n  ${OUT}`);
-  console.log('Rebuild src-tauri to embed the updated list (cargo build / tauri build).');
+  await mkdir(dir, { recursive: true });
+  await writeFile(out, JSON.stringify(data, null, 0) + '\n', 'utf8');
+  console.log(`✓ Wrote ${count} packages to\n  ${out}`);
+  console.log('Restart DozeForge to load the community overlay (no rebuild needed).');
 }
 
 main().catch((err) => {
   console.error(`\n✗ Sync failed: ${err.message}`);
-  console.error('The bundled curated list still works; this only updates it.');
+  console.error('DozeForge still works with its bundled seed; this only adds the community overlay.');
   process.exit(1);
 });
