@@ -1,0 +1,47 @@
+name: "🐛 Bug report"
+description: Something in DozeForge is broken or behaves unexpectedly.
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Android device & ROM
+      placeholder: "e.g. Samsung Galaxy S23 — One UI 6 — Android 14"
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Desktop OS
+      placeholder: "e.g. Windows 11 / macOS 14 / Ubuntu 24.04"
+    validations:
+      required: true
+  - type: dropdown
+    id: connection
+    attributes:
+      label: Connection
+      options: ["USB", "Wi-Fi (wireless debugging)"]
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostic
+    attributes:
+      label: Diagnostic (optional but very helpful)
+      description: >
+        Logs & Tools → Export diagnostic, then attach the file here.
+        REVIEW IT FIRST — it contains your installed-app list and device fingerprint.
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open …
+        2. Click …
+        3. See error …

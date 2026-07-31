@@ -1,0 +1,34 @@
+name: "📱 Device compatibility report"
+description: A screen shows empty / wrong data on your device — help us support your ROM.
+labels: ["device-compat"]
+body:
+  - type: markdown
+    attributes:
+      value: >
+        DozeForge parses vendor-specific `dumpsys` output. If a screen is empty or
+        wrong on your device, a diagnostic dump lets us fix the parser and add a
+        test so it never regresses. Thank you!
+  - type: input
+    id: device
+    attributes:
+      label: Device & ROM
+      placeholder: "e.g. Xiaomi Redmi Note 13 — HyperOS 1 — Android 14"
+    validations:
+      required: true
+  - type: input
+    id: screen
+    attributes:
+      label: Which screen / feature is affected?
+      placeholder: "e.g. Battery → per-app drain empty; Sleep → kernel wakelocks show 0"
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostic
+    attributes:
+      label: Diagnostic file
+      description: >
+        Logs & Tools → Export diagnostic, then attach the file here.
+        REVIEW IT FIRST — it contains your installed-app list and device fingerprint.
+        You may redact package names; the dump format is what matters.
+    validations:
+      required: true
