@@ -71,16 +71,17 @@ static SECTION_START: Lazy<Regex> = Lazy::new(|| {
     .unwrap()
 });
 
-// Accepts:
-//   Kernel Wakelock "name": <duration> (<n> times)
-//   Kernel Wakelock "name": <duration> (n=<n>)
-//   Wakeup reason "name":   <duration> (<n> times)
+// Accepts, across ROMs / API levels:
+//   Kernel Wakelock "name": <duration> (<n> times)      (older, quoted)
+//   Kernel Wake lock name:  <duration> (<n> times) realtime   (Pixel/AOSP now)
 //   Wakeup reason "name":   <duration> (n=<n>)
+//   Wakeup reason name:     <duration> (<n> times)
 //
-// And tolerates optional trailing tokens (`realtime`, `uptime`, etc.)
+// Key robustness points: "Wakelock" and "Wake lock" (optional space), and the
+// name may be quoted OR bare. Trailing tokens (`realtime`, `uptime`) are ignored.
 static KW_LINE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(
-        r#"(?m)^\s*(?:Kernel Wakelock|Wakeup reason)\s+"(?P<name>[^"]+)":\s+(?P<dur>[\d.dhmsy ]+?)(?:\s*\((?:n=)?(?P<cnt>\d+)(?:\s+times?)?\))"#,
+        r#"(?m)^\s*(?:Kernel Wake\s?lock|Wakeup reason)\s+"?(?P<name>[^":\n]+?)"?:\s+(?P<dur>[\d.dhmsy ]+?)(?:\s*\((?:n=)?(?P<cnt>\d+)(?:\s+times?)?\))"#,
     )
     .expect("KW_LINE regex compiles")
 });
@@ -225,6 +226,16 @@ mod tests {
   Wakeup reason \"qcom_rx_wakelock\": 1h 47m 12s (n=3201)
 ";
 
+    // Real Pixel 8 Pro / Android 15: 'Kernel Wake lock' (with a space) and
+    // BARE (unquoted) names + trailing 'realtime'. The old regex missed these
+    // entirely, so the UI showed 0 kernel wakelocks.
+    const SAMPLE_PIXEL_BARE: &str = "
+  All kernel wake locks:
+  Kernel Wake lock SuspendControl.TotalSuspendDelay: 7h 42m 22s 874ms (12262 times) realtime
+  Kernel Wake lock wlan_rx_wake: 2h 1m 20s 652ms (43774 times) realtime
+  Kernel Wake lock PowerManagerService.WakeLocks: 43m 31s 494ms (2073 times) realtime
+";
+
     const SAMPLE_PROC_WAKELOCKS: &str = "name                              active_count    event_count     wakeup_count    expire_count    active_since    total_time      max_time        last_change     prevent_suspend_time
 \"wlan_rx_wake\"                    1234            0               56              0               0               15692000        1200            5421000         14782000
 \"qcom_rx_wakelock\"                0               0               0               0               0               1000            100             100             0
@@ -248,6 +259,17 @@ mod tests {
         assert_eq!(out[0].name, "wlan_rx_wake");
         assert_eq!(out[0].count, 8000);
         assert_eq!(out[0].total_ms, 30 * 60_000);
+    }
+
+    #[test]
+    fn parses_pixel_bare_kernel_wake_lock_form() {
+        let out = KernelWakelocksParser.parse(SAMPLE_PIXEL_BARE).unwrap();
+        assert_eq!(out.len(), 3, "bare 'Kernel Wake lock' lines must parse");
+        // Sorted by total_ms desc → the 7h42m suspend delay is first.
+        assert_eq!(out[0].name, "SuspendControl.TotalSuspendDelay");
+        assert_eq!(out[0].count, 12262);
+        let wlan = out.iter().find(|w| w.name == "wlan_rx_wake").unwrap();
+        assert_eq!(wlan.count, 43774);
     }
 
     #[test]

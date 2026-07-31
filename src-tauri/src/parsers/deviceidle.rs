@@ -72,7 +72,10 @@ impl Parser for DozeStateParser {
         for line in input.lines() {
             let t = line.trim();
             if let Some(v) = t.strip_prefix("mState=") {
-                state.state = v.to_string();
+                // The value can carry trailing detail, e.g. `mState=ACTIVE (nfc)`
+                // or `mState=IDLE mLightState=...`. Keep only the state token so
+                // it matches the UI's expected enum names (ACTIVE, IDLE, …).
+                state.state = v.split_whitespace().next().unwrap_or("").to_string();
             } else if let Some(v) = t.strip_prefix("mDeepEnabled=") {
                 state.deep_enabled = v == "true";
             } else if let Some(v) = t.strip_prefix("mForceIdle=") {

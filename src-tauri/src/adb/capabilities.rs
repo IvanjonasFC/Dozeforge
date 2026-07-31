@@ -46,7 +46,9 @@ impl CapabilityProbe {
         let short = Duration::from_secs(5);
 
         let appops_get = probe_ok(client, serial, "cmd appops get android", short).await;
-        let appops_set = probe_ok(client, serial, "cmd appops set android RUN_IN_BACKGROUND allow", short).await;
+        // `appops set` is gated identically to `appops get` from the adb shell,
+        // so derive it rather than run a state-mutating probe.
+        let appops_set = appops_get;
         let am_set_standby_bucket = probe_ok(client, serial, "am get-standby-bucket android", short).await;
         let pm_disable_user = probe_ok(client, serial, "pm list packages -s", short).await;
         let device_config_put = probe_ok(client, serial, "device_config list activity_manager", short).await;
@@ -71,6 +73,25 @@ impl CapabilityProbe {
     }
 }
 
+/// Whether a primitive is usable. A non-zero exit code does NOT mean the
+/// primitive is missing — many valid Android commands (`dumpsys`,
+/// `device_config`, `am get-standby-bucket`…) exit non-zero while working fine.
+/// We therefore treat a command as AVAILABLE unless the device explicitly
+/// reports it as unknown or permission-denied. Transient errors (timeout / IO)
+/// also stay "available" so a flaky probe never disables a working feature.
 async fn probe_ok(client: &AdbClient, serial: &DeviceSerial, cmd: &str, deadline: Duration) -> bool {
-    client.invoker.shell(serial, cmd, deadline).await.is_ok()
+    match client.invoker.shell(serial, cmd, deadline).await {
+        Ok(_) => true,
+        Err(crate::error::Error::AdbCommand { stderr, .. }) => {
+            let s = stderr.to_lowercase();
+            !(s.contains("unknown command")
+                || s.contains("not found")
+                || s.contains("no such")
+                || s.contains("permission den")
+                || s.contains("security exception")
+                || s.contains("requires the following permission")
+                || s.contains("op not implemented"))
+        }
+        Err(_) => true,
+    }
 }

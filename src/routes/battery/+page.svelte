@@ -11,6 +11,7 @@
   import { i18n } from '$stores/i18n.svelte';
   import BatteryHistory from '$components/BatteryHistory.svelte';
   import StatCard from '$components/StatCard.svelte';
+  import OemNote from '$components/OemNote.svelte';
 
   const IC_CYCLE = '<path d="M3 2v6h6"/><path d="M3 8a9 9 0 1 0 2.6-5.6L3 8"/>';
   const IC_BATT = '<rect x="2" y="7" width="16" height="10" rx="2.5"/><line x1="22" y1="11" x2="22" y2="13"/>';
@@ -409,6 +410,8 @@
   </div>
 </header>
 
+<OemNote />
+
 {#if !deviceStore.selected}
   <div class="card empty"><p class="muted">{i18n.t('No device connected.')}</p></div>
 {:else}
@@ -569,6 +572,9 @@
         {/if}
       </div>
     {:else}
+      {#if drain.computed_drain_mah <= 0.5}
+        <div class="charge-note">{i18n.t('Computed drain is ~0 because the phone is charging or was just fully charged. The per-app figures are cumulative estimates and the bars show relative weight — unplug and use the phone on battery for real drain numbers.')}</div>
+      {/if}
       <!-- KPI strip -->
       <div class="grid drain-kpi">
         <div class="card stat-tile">
@@ -1020,6 +1026,12 @@
   }
   .filter-input::placeholder { color: var(--fg-3); }
 
+  .charge-note {
+    background: var(--warn-soft, rgba(245, 158, 11, 0.1));
+    border: 1px solid rgba(245, 158, 11, 0.28);
+    color: var(--fg-2); font-size: var(--font-size-xs); line-height: 1.5;
+    padding: 0.6rem 0.85rem; border-radius: var(--radius); margin-bottom: 1rem;
+  }
   .share-bar {
     position: relative;
     width: 110px;

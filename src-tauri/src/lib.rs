@@ -66,6 +66,7 @@ pub fn run() {
             ipc::commands::list_snapshots,
             ipc::commands::rollback_snapshot,
             ipc::commands::export_shell_script,
+            ipc::commands::export_diagnostic,
             ipc::commands::disable_bloatware,
             ipc::commands::enable_bloatware,
             ipc::commands::set_phantom_process_limit,

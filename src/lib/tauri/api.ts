@@ -123,6 +123,10 @@ export const api = {
   exportShellScript: (actions: OptimizationAction[], deviceLabel: string) =>
     call<string>('export_shell_script', { actions, deviceLabel }),
 
+  /** Capture key diagnostic dumps into one shareable file; returns its path. */
+  exportDiagnostic: (serial: string) =>
+    call<string>('export_diagnostic', { serial }),
+
   disableBloatware: (serial: string, packages: string[]) =>
     call<BloatwareReport>('disable_bloatware', { serial, packages }),
 
@@ -491,7 +495,7 @@ export const api = {
   disableDozeMotion: (serial: string, disable: boolean) =>
     call<void>('disable_doze_motion', { serial, disable }),
   tuneGmsHeartbeat: (serial: string, intervalMs: number) =>
-    call<void>('tune_gms_heartbeat', { serial, interval_ms: intervalMs }),
+    call<void>('tune_gms_heartbeat', { serial, intervalMs }),
   runFstrim: (serial: string) =>
     call<void>('run_fstrim', { serial }),
   cleanOrphanedData: (serial: string) =>
@@ -501,9 +505,9 @@ export const api = {
   forceNetworkMode: (serial: string, mode: number) =>
     call<void>('force_network_mode', { serial, mode }),
   sideloadApk: (serial: string, apkPath: string) =>
-    call<string>('sideload_apk', { serial, apk_path: apkPath }),
+    call<string>('sideload_apk', { serial, apkPath }),
   backupAppData: (serial: string, pkg: string, outPath: string) =>
-    call<string>('backup_app_data', { serial, pkg, out_path: outPath }),
+    call<string>('backup_app_data', { serial, pkg, outPath }),
   restoreBackup: (serial: string, path: string) =>
     call<string>('restore_backup', { serial, path }),
   enableSensorsOffTile: (serial: string) =>

@@ -206,6 +206,21 @@ impl Parser for BatteryDrainParser {
         out.entries.dedup_by_key(|e| e.uid);
 
         out.entries.sort_by(|a, b| b.drain_mah.partial_cmp(&a.drain_mah).unwrap_or(std::cmp::Ordering::Equal));
+
+        // When the device is charging / just fully charged, batterystats reports
+        // a ~0 "Computed drain", which would flatten every share bar to 0%. Fall
+        // back to a share relative to the summed per-app estimates so the bars
+        // still convey each app's *relative* weight. Verdicts stay untouched —
+        // with no real discharge session there is genuinely nothing to flag.
+        if out.computed_drain_mah <= 0.0 {
+            let sum: f64 = out.entries.iter().map(|e| e.drain_mah).sum();
+            if sum > 0.0 {
+                for e in out.entries.iter_mut() {
+                    e.drain_share = (e.drain_mah / sum) as f32;
+                }
+            }
+        }
+
         Ok(out)
     }
 }

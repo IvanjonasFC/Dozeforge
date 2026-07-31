@@ -113,6 +113,21 @@
     } finally { bugreportLoading = false; }
   }
 
+  // One-click diagnostic export: captures the key dumpsys sections into a file
+  // the user can share to help harden device support (Samsung/Xiaomi/etc.).
+  let diagPath = $state<string | null>(null);
+  let diagError = $state<string | null>(null);
+  let diagLoading = $state(false);
+  async function exportDiag() {
+    if (!deviceStore.selected || deviceStore.selected.state !== 'device') return;
+    diagLoading = true; diagPath = null; diagError = null;
+    try {
+      diagPath = await api.exportDiagnostic(deviceStore.selected.serial);
+    } catch (e) {
+      diagError = (e as DozeForgeError).message;
+    } finally { diagLoading = false; }
+  }
+
   async function exportShellScript() {
     if (!deviceStore.selected) return;
     actionLoading = true; actionError = null; exportPath = null;
@@ -299,6 +314,18 @@
       {#if bugreportText}
         <textarea class="code-area" readonly style="margin-top: 1rem; height: 400px; width: 100%; white-space: pre; font-size: 11px;">{bugreportText}</textarea>
       {/if}
+    </div>
+
+    <div class="card p-card" style="margin-top: 1rem;">
+      <h3>{i18n.t('Export diagnostic')}</h3>
+      <p class="muted small">{i18n.t('One-click capture of battery, storage, Doze and standby dumps into a single file. Share it to help add support for your exact device/ROM. Read-only, no root.')}</p>
+      <button class="primary" onclick={exportDiag} disabled={diagLoading} style="margin-top: 1rem;">
+        {diagLoading ? i18n.t('Capturing…') : i18n.t('Export diagnostic')}
+      </button>
+      {#if diagPath}
+        <p class="success" style="margin-top: 1rem;">{i18n.t('Saved to')} <code class="mono">{diagPath}</code></p>
+      {/if}
+      {#if diagError}<p class="error" style="margin-top: 1rem;">{diagError}</p>{/if}
     </div>
   {:else if activeTab === 'profiles'}
     <div class="grid two-grid">

@@ -7,6 +7,7 @@
   import { cache, TTL } from '$stores/cache.svelte';
   import Skeleton from '$components/Skeleton.svelte';
   import CapabilitiesBanner from '$components/CapabilitiesBanner.svelte';
+  import OemNote from '$components/OemNote.svelte';
   import AppName from '$components/AppName.svelte';
   import { i18n } from '$stores/i18n.svelte';
   import type {
@@ -188,6 +189,8 @@
     </button>
   </div>
 </header>
+
+<OemNote />
 
 {#if !deviceStore.selected}
   <div class="card empty"><p class="muted">{i18n.t('No device connected. Plug in a phone via USB with debugging enabled.')}</p></div>

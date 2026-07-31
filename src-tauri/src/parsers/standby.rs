@@ -9,8 +9,12 @@ use crate::error::Result;
 
 use super::{Parser, PackageName, StandbyAssignment, StandbyBucket};
 
+// Tolerant across ROMs / API levels. The bucket key varies: `standby_bucket=`,
+// `standbyBucket=`, `appStandbyBucket=`, `bucket=` (all end in `bucket=`), or the
+// legacy `group=`. Case-insensitive; matches any `…bucket=NN` or `group=NN` that
+// appears on the same line as the `package=` token.
 static ROW: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"package=(?P<pkg>[\w.]+)\s+(?:type=\S+\s+)?(?:.*?\s)?(?:group|standby_bucket)=(?P<bucket>\d+)")
+    Regex::new(r"(?i)package=(?P<pkg>[\w.]+)[^\n]*?(?:bucket|group)=(?P<bucket>\d+)")
         .unwrap()
 });
 

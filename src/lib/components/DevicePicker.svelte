@@ -306,8 +306,8 @@
   .dd-tag { margin-left: 0.4rem; font-size: 9px; font-weight: 700; letter-spacing: 0.05em; color: var(--fg-3); background: var(--bg-3); padding: 1px 5px; border-radius: 5px; flex-shrink: 0; }
   .dd-x {
     flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center;
-    width: 28px; height: 28px; padding: 0; background: var(--bg-3); border: 1px solid var(--hairline); border-radius: 8px;
-    color: var(--fg-2); cursor: pointer; transition: background var(--t-fast), color var(--t-fast), border-color var(--t-fast);
+    width: 28px; height: 28px; padding: 0; background: var(--bg-3); border: 1px solid var(--border-strong); border-radius: 8px;
+    color: var(--fg-1); cursor: pointer; transition: background var(--t-fast), color var(--t-fast), border-color var(--t-fast);
   }
   .dd-x svg { display: block; width: 13px; height: 13px; }
   .dd-usb {
@@ -315,7 +315,7 @@
     color: var(--fg-3); background: var(--bg-3); border: 1px solid var(--hairline);
     padding: 3px 6px; border-radius: 6px; cursor: help;
   }
-  .dd-x:hover { background: rgba(239, 68, 68, 0.16); border-color: rgba(239, 68, 68, 0.45); color: var(--bad); }
+  .dd-x:hover { background: var(--bad); border-color: var(--bad); color: #fff; }
 
   .dd-empty { padding: 0.6rem; color: var(--fg-3); font-size: var(--font-size-sm); }
   .dd-empty.small { font-size: var(--font-size-xs); }

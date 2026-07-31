@@ -13,6 +13,7 @@
 [![scrcpy](https://img.shields.io/badge/Screen_Mirror-scrcpy-ff6b00?logoColor=white)](https://github.com/Genymobile/scrcpy)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 ![Version](https://img.shields.io/badge/version-1.0.0--beta.1-ff6b00)
+[![CI](https://github.com/IvanjonasFC/Dozeforge/actions/workflows/ci.yml/badge.svg)](https://github.com/IvanjonasFC/Dozeforge/actions/workflows/ci.yml)
 
 <img src="assets/portada.png" alt="DozeForge" width="920" />
 

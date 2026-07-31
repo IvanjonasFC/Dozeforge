@@ -238,6 +238,16 @@ button:hover:not(:disabled) {
 button:active:not(:disabled) { transform: translateY(1px); }
 button:disabled { opacity: 0.4; cursor: not-allowed; }
 
+/* Selected item in a segmented / option button group (heartbeat interval,
+   refresh rate, animation scale, …). Any `class="outline"` + `class:active`
+   button gets a clear accent highlight so the current choice is obvious. */
+button.outline.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
+  font-weight: 600;
+}
+
 button.primary {
   background: var(--accent-gradient);
   color: #fff;

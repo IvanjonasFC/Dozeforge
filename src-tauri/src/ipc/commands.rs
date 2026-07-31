@@ -416,6 +416,39 @@ pub async fn export_shell_script(
     Ok(path.display().to_string())
 }
 
+/// Capture the key read-only diagnostic dumps into one shareable text file.
+/// Lets any user on any device send a dump that hardens parser coverage for
+/// their ROM (Samsung/Xiaomi/etc.) without knowing any adb commands. No root.
+#[tauri::command]
+pub async fn export_diagnostic(
+    state: State<'_, Arc<AppState>>,
+    serial: String,
+) -> std::result::Result<String, IpcError> {
+    let serial = checked_serial(&serial)?;
+    let sections: &[(&str, &str, u64)] = &[
+        ("DEVICE", "getprop ro.product.manufacturer; getprop ro.product.model; getprop ro.build.version.sdk; getprop ro.build.fingerprint", 10),
+        ("BATTERY", "dumpsys battery", 10),
+        ("DISKSTATS", "dumpsys diskstats", 20),
+        ("DEVICEIDLE", "dumpsys deviceidle", 10),
+        ("USAGESTATS", "dumpsys usagestats", 20),
+        ("BATTERYSTATS", "dumpsys batterystats --charged", 90),
+    ];
+    let mut out = format!("DozeForge diagnostic — {}\n", chrono::Utc::now().to_rfc3339());
+    for (name, cmd, secs) in sections {
+        out.push_str(&format!("\n==={name}===\n"));
+        match state.adb.invoker.shell(&serial, cmd, Duration::from_secs(*secs)).await {
+            Ok(r) => out.push_str(&r),
+            Err(e) => out.push_str(&format!("(failed: {e})\n")),
+        }
+    }
+    let stamp = chrono::Utc::now().format("%Y%m%d-%H%M%S");
+    let dir = state.data_dir.join("exports");
+    std::fs::create_dir_all(&dir).ok();
+    let path = dir.join(format!("dozeforge-diagnostic-{stamp}.txt"));
+    std::fs::write(&path, out).map_err(|e| IpcError::from(crate::error::Error::Io(e)))?;
+    Ok(path.display().to_string())
+}
+
 #[tauri::command]
 pub async fn disable_bloatware(
     state: State<'_, Arc<AppState>>,
@@ -1357,7 +1390,27 @@ pub async fn kernel_wakelocks(
         .shell(&serial, "cat /proc/wakelocks 2>/dev/null", Duration::from_secs(5))
         .await
         .unwrap_or_default();
-    Ok(KernelWakelocksParser::parse_proc_wakelocks(&proc_raw))
+    let proc = KernelWakelocksParser::parse_proc_wakelocks(&proc_raw);
+    if !proc.is_empty() {
+        return Ok(proc);
+    }
+
+    // Third source (root only): modern kernels drop /proc/wakelocks and expose
+    // wakeup sources under debugfs at `/sys/kernel/debug/wakeup_sources`, which
+    // is root-gated. It uses the same columnar layout (name / wakeup_count /
+    // total_time at cols 0 / 3 / 6), so the same parser handles it. On a
+    // non-root device this returns empty and the UI keeps its honest note.
+    let ws_raw = state
+        .adb
+        .invoker
+        .shell(
+            &serial,
+            "su -c 'cat /sys/kernel/debug/wakeup_sources' 2>/dev/null",
+            Duration::from_secs(5),
+        )
+        .await
+        .unwrap_or_default();
+    Ok(KernelWakelocksParser::parse_proc_wakelocks(&ws_raw))
 }
 
 #[tauri::command]

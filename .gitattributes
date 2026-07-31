@@ -1,0 +1,30 @@
+# Normalize line endings: LF in the repo for all text files (clean diffs and
+# consistent checkout on the Linux/macOS CI). Windows scripts keep CRLF.
+* text=auto eol=lf
+
+# Shell / JS / config -> always LF (they run on the Linux CI).
+*.sh   text eol=lf
+*.mjs  text eol=lf
+*.js   text eol=lf
+*.ts   text eol=lf
+*.json text eol=lf
+*.yml  text eol=lf
+*.rs   text eol=lf
+*.svelte text eol=lf
+
+# Windows-only scripts -> CRLF.
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binaries (never touch line endings).
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ico binary
+*.icns binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.exe binary
+*.dll binary

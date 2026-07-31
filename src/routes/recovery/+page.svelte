@@ -3,6 +3,7 @@
   import { deviceStore } from '$stores/device.svelte';
   import { api, DozeForgeError } from '$tauri/api';
   import { i18n } from '$stores/i18n.svelte';
+  import { cache, TTL } from '$stores/cache.svelte';
 
   let busy = $state(false);
   let msg = $state<string | null>(null);
@@ -85,7 +86,7 @@
   let props = $state<Record<string, string> | null>(null);
   async function loadProps() {
     if (!dev || dev.state !== 'device') return;
-    try { props = await api.getSystemProperties(dev.serial); } catch { /* offline/bootloader: fall back to the device list */ }
+    try { props = await cache.getOrFetch('props:' + dev.serial, TTL.medium, () => api.getSystemProperties(dev!.serial)); } catch { /* offline/bootloader: fall back to the device list */ }
   }
   onMount(loadProps);
   $effect(() => { if (dev?.state === 'device' && !props) loadProps(); });
@@ -94,6 +95,20 @@
   const maker = $derived((props?.['ro.product.manufacturer'] ?? dev?.manufacturer ?? '').toLowerCase());
   const fingerprint = $derived(props?.['ro.build.fingerprint'] ?? props?.['ro.bootimage.build.fingerprint'] ?? null);
   const androidVer = $derived(props?.['ro.build.version.release'] ?? null);
+  // Device codename (e.g. "husky", "lisa") — used to look up community dumps.
+  const codename = $derived(props?.['ro.product.device'] ?? props?.['ro.product.board'] ?? props?.['ro.product.name'] ?? null);
+  // Structured firmware-dump and device-tree databases, keyed by codename.
+  const dumpLinks = $derived.by(() => {
+    const cn = (codename ?? '').trim();
+    if (!cn) return null;
+    const q = encodeURIComponent(cn);
+    return {
+      cn,
+      gitlab: `https://gitlab.com/search?scope=projects&search=${q}`,
+      github: `https://github.com/orgs/Android-FW-Dumps/repositories?q=${q}`,
+      tree: `https://github.com/search?type=repositories&q=${encodeURIComponent('android_device ' + cn)}`,
+    };
+  });
 
   const FIRMWARE = [
     { key: 'google',   name: 'Google Pixel / Nexus', how: 'Official Factory Images — flash with the bundled flash-all script (fastboot).', url: 'https://developers.google.com/android/images' },
@@ -226,6 +241,27 @@
           </button>
         </div>
       {/each}
+    </div>
+  {/if}
+
+  {#if dumpLinks}
+    <div class="fw-dumps">
+      <div class="fw-oem-name">{i18n.t('Community dumps & device trees')} <span class="muted small mono">({dumpLinks.cn})</span></div>
+      <p class="muted small">{i18n.t('When no official firmware fits, these databases host per-partition images (boot, vbmeta, recovery…) and device trees, indexed by codename. Community-extracted — verify carefully; a wrong image bricks.')}</p>
+      <div class="fw-dump-row">
+        <button class="fw-btn sm" onclick={() => openUrl(dumpLinks!.gitlab)}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+          GitLab Android-Dumps
+        </button>
+        <button class="fw-btn sm" onclick={() => openUrl(dumpLinks!.github)}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+          GitHub FW-Dumps
+        </button>
+        <button class="fw-btn sm" onclick={() => openUrl(dumpLinks!.tree)}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+          Device trees
+        </button>
+      </div>
     </div>
   {/if}
 </div>
@@ -377,6 +413,8 @@
   .fw-fp { word-break: break-all; margin: 0 0 0.6rem; }
   .fw-oem { margin-top: 0.7rem; padding-top: 0.7rem; border-top: 1px solid var(--hairline); }
   .fw-oem-name { font-weight: 600; color: var(--fg-0); margin-bottom: 0.2rem; }
+  .fw-dumps { margin-top: 0.9rem; padding-top: 0.8rem; border-top: 1px solid var(--hairline); }
+  .fw-dump-row { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.6rem; }
   .fw-url { display: block; margin-top: 0.25rem; word-break: break-all; }
   .fw-list { margin-top: 0.5rem; }
   .fw-item {

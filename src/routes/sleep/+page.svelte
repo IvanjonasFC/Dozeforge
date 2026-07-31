@@ -6,6 +6,7 @@
   import { appModalStore } from '$stores/appModal.svelte';
   import Skeleton from '$components/Skeleton.svelte';
   import AppName from '$components/AppName.svelte';
+  import OemNote from '$components/OemNote.svelte';
   import { labelStore } from '$stores/labels.svelte';
   import { i18n } from '$stores/i18n.svelte';
   import type {
@@ -142,7 +143,14 @@
     if (!deviceStore.selected) return;
     loading = true; error = null;
     try {
-      await api.simulateUnplug(deviceStore.selected.serial, true);
+      const s = deviceStore.selected.serial;
+      // 1) Pretend the device is on battery so Doze is allowed to run.
+      await api.simulateUnplug(s, true);
+      // 2) Advance the deep-idle state machine one phase, so each click visibly
+      //    steps ACTIVE → INACTIVE → … → IDLE (otherwise Doze only progresses on
+      //    its own after minutes with the screen off — nothing to see here live).
+      await api.runShell(s, 'dumpsys deviceidle step deep');
+      // 3) Re-read the new state.
       await analyze();
     } catch (e) { error = (e as DozeForgeError).message; }
     finally { loading = false; }
@@ -170,6 +178,86 @@
       if (b) b.bucket = bucket;
       success = i18n.t('Priority of {{pkg}} changed to {{bucket}}', { pkg, bucket });
     } catch (e) { error = (e as DozeForgeError).message; }
+  }
+
+  // Color per standby bucket, from most freedom / battery drain (red) to most
+  // restricted / battery friendly (green). Drives both the legend and the badges.
+  // Green = runs freely (consumes most) → Red = frozen (saves most).
+  const BUCKET_META: Record<string, { color: string; note: string }> = {
+    exempted:    { color: '#22C55E', note: 'allowlisted' },
+    active:      { color: '#84CC16', note: 'no limits' },
+    working_set: { color: '#EAB308', note: 'mild limits' },
+    frequent:    { color: '#F59E0B', note: 'medium limits' },
+    rare:        { color: '#F97316', note: 'strict limits' },
+    restricted:  { color: '#EF4444', note: 'frozen' },
+    never:       { color: '#991B1B', note: 'never runs' },
+  };
+  const BUCKET_ORDER = ['active', 'working_set', 'frequent', 'rare', 'restricted', 'exempted'];
+  const BUCKET_LABEL: Record<string, string> = {
+    active: 'Active', working_set: 'Working Set', frequent: 'Frequent',
+    rare: 'Rare', restricted: 'Restricted', exempted: 'Exempted', never: 'Never',
+  };
+  function bucketColor(b: string): string {
+    return BUCKET_META[b.toLowerCase()]?.color ?? 'var(--fg-3)';
+  }
+  function bucketLabel(k: string): string {
+    return BUCKET_LABEL[k.toLowerCase()] ?? k;
+  }
+
+  // Custom "change priority" dropdown (styled like the top-bar device picker),
+  // shared and fixed-positioned so it never gets clipped by the scroll area.
+  // Only the user-actionable buckets are offered (Android internal values in
+  // parentheses); Exempted (5) and Never (50) are system/edge states we don't
+  // let users set by hand.
+  const USER_BUCKETS = [
+    { value: 'active', n: 10 },
+    { value: 'working_set', n: 20 },
+    { value: 'frequent', n: 30 },
+    { value: 'rare', n: 40 },
+    { value: 'restricted', n: 45 },
+  ];
+  let menuPkg = $state<string | null>(null);
+  let menuPos = $state<{ left: number; top: number }>({ left: 0, top: 0 });
+  function openBucketMenu(e: MouseEvent, pkg: string) {
+    e.stopPropagation();
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    menuPos = { left: r.right - 190, top: r.bottom + 4 };
+    menuPkg = pkg;
+  }
+  function chooseBucket(value: string) {
+    if (menuPkg) updateBucket(menuPkg, value);
+    menuPkg = null;
+  }
+  $effect(() => {
+    if (!menuPkg) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') menuPkg = null; };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  });
+
+  // Some kernel wakelocks map to a real, safe toggle. Return an action for those,
+  // null for the purely diagnostic ones (radio/suspend/etc. can't be "fixed").
+  function kernelQuickFix(name: string): { label: string; run: (s: string) => Promise<unknown> } | null {
+    const n = name.toLowerCase();
+    if (n.includes('nfc')) {
+      return { label: i18n.t('Disable NFC'), run: (s) => api.runShell(s, 'svc nfc disable') };
+    }
+    if (n.includes('wlan_scan') || n.includes('wifi_scan')) {
+      return { label: i18n.t('Stop background scan'), run: (s) => api.setBackgroundScan(s, false, false) };
+    }
+    return null;
+  }
+  let kernelFixBusy = $state<string | null>(null);
+  async function runKernelFix(name: string) {
+    if (!deviceStore.selected) return;
+    const fix = kernelQuickFix(name);
+    if (!fix) return;
+    kernelFixBusy = name;
+    try {
+      await fix.run(deviceStore.selected.serial);
+      success = i18n.t('Applied: {{label}}', { label: fix.label });
+    } catch (e) { error = (e as DozeForgeError).message; }
+    finally { kernelFixBusy = null; }
   }
 
   async function removeWhitelist(pkg: string) {
@@ -246,6 +334,8 @@
   </button>
 </header>
 
+<OemNote />
+
 {#if !deviceStore.selected}
   <div class="card empty"><p class="muted">{i18n.t('No device connected.')}</p></div>
 {:else}
@@ -271,7 +361,10 @@
     </div>
 
     {#if !timeline}
-      {#if loading}<Skeleton lines={4} />{:else}<p class="muted">{i18n.t('Timeline not available — device may not have been on battery long enough.')}</p>{/if}
+      {#if loading}<Skeleton lines={4} />{:else}
+        <p class="muted">{i18n.t('Timeline not available — device may not have been on battery long enough.')}</p>
+        <p class="muted small">{i18n.t('It needs recent time on battery. Over a USB cable the phone is always charging, so this stays empty — enable Wi-Fi ADB (device picker → Enable TCP/IP), unplug the cable, use the phone for a while, then re-analyze.')}</p>
+      {/if}
     {:else}
       {@const base = Math.max(timeline.on_battery_realtime_ms, timeline.screen_off_realtime_ms, 1)}
       <div class="timeline">
@@ -378,17 +471,17 @@
               {i18n.t('Real-time state of the device idle controller. The device must pass through sensing phases before deep sleep.')}
             </p>
           </div>
-          <button class="secondary" onclick={simulateUnplug} disabled={loading} title={i18n.t('Tricks the system into thinking it is not plugged into USB')}>{i18n.t('Simulate battery')}</button>
+          <button class="secondary" onclick={simulateUnplug} disabled={loading} title={i18n.t('Simulates being on battery and steps the Doze machine one phase forward. Click repeatedly to walk it to deep sleep (IDLE).')}>{i18n.t('Simulate battery')}</button>
         </div>
-        
+
         <div class="state-machine">
           {#each ['ACTIVE', 'INACTIVE', 'IDLE_PENDING', 'SENSING', 'LOCATING', 'IDLE', 'IDLE_MAINTENANCE'] as st, i}
-            <div class="sm-node {dozeState.state === st ? 'active' : ''}">
+            <div class="sm-node {dozeState.state.toUpperCase() === st ? 'active' : ''}">
               <div class="sm-circle"></div>
               <span class="sm-label">{st}</span>
             </div>
             {#if i < 6}
-              <div class="sm-line {dozeState.state === 'IDLE' && i < 5 ? 'past' : ''}"></div>
+              <div class="sm-line {dozeState.state.toUpperCase() === 'IDLE' && i < 5 ? 'past' : ''}"></div>
             {/if}
           {/each}
         </div>
@@ -539,10 +632,16 @@
     <div class="row" style="justify-content: space-between; align-items: flex-start; margin-bottom: 0.85rem;">
       <div>
         <h3 style="margin: 0 0 0.5rem;">{i18n.t("Standby Buckets Manager")}</h3>
-        <p class="muted small" style="margin: 0; max-width: 600px;">
-          {i18n.t('Android assigns priorities (buckets) to apps.')}
-          <strong>{i18n.t('Active')}</strong> {i18n.t('(no limits),')} <strong>{i18n.t('Working Set')}</strong> {i18n.t('(mild limits),')} <strong>{i18n.t('Frequent')}</strong> {i18n.t('(medium limits),')} <strong>{i18n.t('Rare')}</strong> {i18n.t('(strict limits, rarely connects),')} <strong>{i18n.t('Restricted')}</strong> {i18n.t('(frozen).')}
+        <p class="muted small" style="margin: 0 0 0.6rem; max-width: 620px;">
+          {i18n.t('Android assigns each app a priority (bucket). The lower the priority, the more its background activity is throttled — saving battery. Colors go from green (runs freely) to red (frozen).')}
         </p>
+        <div class="bucket-legend">
+          {#each BUCKET_ORDER as key}
+            <span class="bk-chip" style="--bk: {BUCKET_META[key].color}">
+              {i18n.t(bucketLabel(key))}<em>{i18n.t(BUCKET_META[key].note)}</em>
+            </span>
+          {/each}
+        </div>
       </div>
       <button class="secondary" onclick={loadBuckets} disabled={bucketsLoading}>
         {bucketsLoading ? i18n.t("Loading…") : (allBuckets.length ? i18n.t("Refresh Buckets") : i18n.t("Load Standby Buckets"))}
@@ -562,25 +661,36 @@
           </thead>
           <tbody>
             {#each allBuckets.filter(b => b.package.toLowerCase().includes(bucketsFilter.toLowerCase())) as b (b.package)}
-              <tr class="app-row" onclick={() => gotoActions(b.package)} style="cursor: pointer;" title="Open optimization options">
+              <tr class="app-row">
                 <td><AppName package={b.package} size="sm" hidePackage inline /></td>
                 <td>
-                  <span class="badge {['active', 'working_set'].includes(b.bucket.toLowerCase()) ? 'warn' : (b.bucket.toLowerCase() === 'restricted' ? 'ok' : 'moderate')}">{b.bucket}</span>
+                  <span class="bk-badge" style="--bk: {bucketColor(b.bucket)}">{i18n.t(bucketLabel(b.bucket))}</span>
                 </td>
                 <td>
-                  <select onchange={(e) => updateBucket(b.package, e.currentTarget.value)} style="padding: 0.25rem; font-size: 12px; width: auto;">
-                    <option value="" disabled selected>{i18n.t("Change...")}</option>
-                    <option value="active">{i18n.t("Active")}</option>
-                    <option value="working_set">{i18n.t("Working Set")}</option>
-                    <option value="frequent">{i18n.t("Frequent")}</option>
-                    <option value="rare">{i18n.t("Rare")}</option>
-                    <option value="restricted">{i18n.t("Restricted")}</option>
-                  </select>
+                  <button class="bk-change" class:open={menuPkg === b.package} onclick={(e) => openBucketMenu(e, b.package)}>
+                    {i18n.t("Change...")}
+                    <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 4.5l3 3 3-3"/></svg>
+                  </button>
                 </td>
               </tr>
             {/each}
           </tbody>
         </table>
+      </div>
+    {/if}
+
+    {#if menuPkg}
+      <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+      <div class="bk-menu-backdrop" onclick={() => (menuPkg = null)} role="presentation"></div>
+      <div class="bk-menu" style="left:{menuPos.left}px; top:{menuPos.top}px" role="menu">
+        <div class="bk-menu-head">{i18n.t('Set priority to')}</div>
+        {#each USER_BUCKETS as opt}
+          <button class="bk-menu-item" title={`bucket ${opt.n}`} onclick={() => chooseBucket(opt.value)}>
+            <span class="bk-dot" style="background:{BUCKET_META[opt.value].color}"></span>
+            <span class="bk-name">{i18n.t(bucketLabel(opt.value))}</span>
+            <span class="bk-note">{i18n.t(BUCKET_META[opt.value].note)}</span>
+          </button>
+        {/each}
       </div>
     {/if}
   </div>
@@ -663,16 +773,27 @@
                 <th>{i18n.t('Count')}</th>
                 <th>{i18n.t('Severity')}</th>
                 <th>{i18n.t('What it usually means')}</th>
+                <th>{i18n.t('Fix')}</th>
               </tr>
             </thead>
             <tbody>
               {#each kernelWl.slice(0, 25) as k (k.name)}
+                {@const fix = kernelQuickFix(k.name)}
                 <tr>
                   <td class="mono">{k.name}</td>
                   <td class="mono">{formatDuration(k.total_ms)}</td>
                   <td class="mono">{k.count}</td>
                   <td><span class="badge {k.severity === 'critical' ? 'bad' : k.severity === 'high' ? 'bad' : k.severity === 'moderate' ? 'warn' : 'ok'}">{k.severity}</span></td>
                   <td class="small">{k.explanation}</td>
+                  <td>
+                    {#if fix}
+                      <button class="btn outline small" disabled={kernelFixBusy === k.name} onclick={() => runKernelFix(k.name)}>
+                        {kernelFixBusy === k.name ? i18n.t('Applying…') : fix.label}
+                      </button>
+                    {:else}
+                      <span class="muted" style="font-size: 11px;">—</span>
+                    {/if}
+                  </td>
                 </tr>
               {/each}
             </tbody>
@@ -753,6 +874,47 @@
 {/if}
 
 <style>
+  /* Standby bucket colour legend + badges */
+  .bucket-legend { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+  .bk-chip {
+    display: inline-flex; align-items: baseline; gap: 0.35rem;
+    padding: 3px 9px; border-radius: 999px; font-size: 11px; font-weight: 600;
+    color: var(--bk);
+    background: color-mix(in srgb, var(--bk) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--bk) 40%, transparent);
+  }
+  .bk-chip em { font-style: normal; font-weight: 500; font-size: 10px; color: var(--fg-3); }
+  .bk-badge {
+    display: inline-block; padding: 2px 10px; border-radius: 999px;
+    font-size: 11px; font-weight: 700; letter-spacing: 0.02em;
+    color: var(--bk);
+    background: color-mix(in srgb, var(--bk) 14%, transparent);
+    border: 1px solid color-mix(in srgb, var(--bk) 45%, transparent);
+  }
+  /* Custom "change priority" dropdown (device-picker style) */
+  .bk-change {
+    display: inline-flex; align-items: center; gap: 0.35rem;
+    padding: 4px 10px; font-size: 12px; font-weight: 600;
+    background: var(--control-bg); border: 1px solid var(--border);
+    border-radius: 8px; color: var(--fg-2); cursor: pointer;
+  }
+  .bk-change:hover, .bk-change.open { border-color: var(--accent); color: var(--fg-0); }
+  .bk-menu-backdrop { position: fixed; inset: 0; z-index: 1000; }
+  .bk-menu {
+    position: fixed; z-index: 1001; width: 190px;
+    background: var(--bg-2); border: 1px solid var(--border-strong);
+    border-radius: 12px; padding: 5px; box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+  }
+  .bk-menu-head { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--fg-3); padding: 4px 8px 6px; }
+  .bk-menu-item {
+    display: flex; align-items: center; gap: 0.5rem; width: 100%;
+    padding: 7px 8px; background: none; border: none; border-radius: 8px;
+    color: var(--fg-1); cursor: pointer; text-align: left; font-size: 13px;
+  }
+  .bk-menu-item:hover { background: var(--bg-3); }
+  .bk-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+  .bk-name { font-weight: 600; }
+  .bk-note { margin-left: auto; font-size: 10px; color: var(--fg-3); }
   .page-head { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 1.5rem; gap: 1rem; }
   .page-head h1 { margin-bottom: 0.25rem; letter-spacing: -0.025em; }
   .page-head p { margin: 0; max-width: 60ch; }

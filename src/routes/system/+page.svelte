@@ -4,6 +4,7 @@
   import { deviceStore } from '$stores/device.svelte';
   import { i18n } from '$stores/i18n.svelte';
   import Skeleton from '$components/Skeleton.svelte';
+  import { cache, TTL } from '$stores/cache.svelte';
 
   type Tab = 'diag' | 'tweaks' | 'root' | 'props' | 'io';
   let activeTab = $state<Tab>('diag');
@@ -27,7 +28,7 @@
     if (!ready) return;
     propsLoading = true; propsError = null;
     try {
-      props = await api.getSystemProperties(dev!.serial);
+      props = await cache.getOrFetch('props:' + dev!.serial, TTL.medium, () => api.getSystemProperties(dev!.serial));
       try { selinux = (await api.runShell(dev!.serial, 'getenforce')).trim(); } catch { /* optional */ }
       try { kernel = (await api.runShell(dev!.serial, 'uname -r')).trim(); } catch { /* optional */ }
     } catch (e) { propsError = (e as DozeForgeError).message; }
@@ -235,7 +236,7 @@
   $effect(() => {
     if (!ready) return;
     if ((activeTab === 'diag' || activeTab === 'props') && !props && !propsLoading) loadProps();
-    if (activeTab === 'io' && ioStats.length === 0 && !ioLoading) loadIoStats();
+    if (activeTab === 'io' && hasRoot && ioStats.length === 0 && !ioLoading) loadIoStats();
     if (activeTab === 'root' && hasRoot && !rootTried) loadRoot();
   });
 
@@ -484,9 +485,16 @@
           <h3>{i18n.t('UFS Storage Degradation Monitor')}</h3>
           <p class="muted small">{i18n.t('Cumulative read/write bytes per app.')} <strong>{i18n.t('Requires root (Magisk/KernelSU).')}</strong></p>
         </div>
-        <button class="btn outline small" onclick={loadIoStats} disabled={ioLoading}>{i18n.t('Refresh')}</button>
+        <button class="btn outline small" onclick={loadIoStats} disabled={ioLoading || !hasRoot}>{i18n.t('Refresh')}</button>
       </div>
-      {#if ioLoading && ioStats.length === 0}
+      {#if hasRoot === false}
+        <div class="card empty">
+          <p class="muted">{i18n.t('This device is not rooted — per-app I/O stats are unavailable.')}</p>
+          <p class="muted small">{i18n.t('It reads /proc/uid_io/stats, which needs root (Magisk/KernelSU) and a compatible kernel.')}</p>
+        </div>
+      {:else if hasRoot === null}
+        <p class="muted small" style="padding: 0.6rem;">{i18n.t('Checking root access…')}</p>
+      {:else if ioLoading && ioStats.length === 0}
         <Skeleton lines={5} />
       {:else if ioError}
         <div class="error">{ioError}</div>
