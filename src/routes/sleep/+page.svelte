@@ -200,6 +200,10 @@
   function bucketColor(b: string): string {
     return BUCKET_META[b.toLowerCase()]?.color ?? 'var(--fg-3)';
   }
+  // Safe accessor (TS noUncheckedIndexedAccess): always returns a concrete object.
+  function bucketMeta(k: string): { color: string; note: string } {
+    return BUCKET_META[k.toLowerCase()] ?? { color: 'var(--fg-3)', note: '' };
+  }
   function bucketLabel(k: string): string {
     return BUCKET_LABEL[k.toLowerCase()] ?? k;
   }
@@ -637,8 +641,8 @@
         </p>
         <div class="bucket-legend">
           {#each BUCKET_ORDER as key}
-            <span class="bk-chip" style="--bk: {BUCKET_META[key].color}">
-              {i18n.t(bucketLabel(key))}<em>{i18n.t(BUCKET_META[key].note)}</em>
+            <span class="bk-chip" style="--bk: {bucketMeta(key).color}">
+              {i18n.t(bucketLabel(key))}<em>{i18n.t(bucketMeta(key).note)}</em>
             </span>
           {/each}
         </div>
@@ -686,9 +690,9 @@
         <div class="bk-menu-head">{i18n.t('Set priority to')}</div>
         {#each USER_BUCKETS as opt}
           <button class="bk-menu-item" title={`bucket ${opt.n}`} onclick={() => chooseBucket(opt.value)}>
-            <span class="bk-dot" style="background:{BUCKET_META[opt.value].color}"></span>
+            <span class="bk-dot" style="background:{bucketMeta(opt.value).color}"></span>
             <span class="bk-name">{i18n.t(bucketLabel(opt.value))}</span>
-            <span class="bk-note">{i18n.t(BUCKET_META[opt.value].note)}</span>
+            <span class="bk-note">{i18n.t(bucketMeta(opt.value).note)}</span>
           </button>
         {/each}
       </div>
