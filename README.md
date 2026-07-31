@@ -206,14 +206,6 @@ dozeforge/
 
 </details>
 
-## Roadmap
-
-- [x] macOS / Linux desktop builds (CI matrix — beta)
-- [ ] Signed, auto-updating manifest of known offenders
-- [ ] Scheduled/automated audits per device
-- [ ] Expanded fleet actions and profiles
-- [ ] In-app scrcpy recording & snapshots
-
 ## License
 
 Distributed under the [MIT](LICENSE) license. Bundled third-party components are
