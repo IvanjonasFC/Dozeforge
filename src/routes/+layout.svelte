@@ -7,6 +7,7 @@
   import { labelStore } from '$stores/labels.svelte';
   import { i18n } from '$stores/i18n.svelte';
   import { themeStore } from '$stores/theme.svelte';
+  import { warmCache } from '$stores/prefetch.svelte';
   import DevicePicker from '$components/DevicePicker.svelte';
   import CommandPalette from '$components/CommandPalette.svelte';
   import AppDetailsModal from '$components/AppDetailsModal.svelte';
@@ -23,6 +24,13 @@
     try { localStorage.setItem('df_disclaimer_v1', '1'); } catch { /* ignore */ }
     showDisclaimer = false;
   }
+
+  // Warm other tabs' data in the background so switching feels instant. Runs
+  // once per connected device; sequential + paced so it never hurts fluidity.
+  $effect(() => {
+    const d = deviceStore.selected;
+    if (d?.state === 'device') warmCache(d.serial);
+  });
 
   // App version shown in the sidebar footer (kept in sync with tauri.conf.json).
   let appVersion = $state('');
