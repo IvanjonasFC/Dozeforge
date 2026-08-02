@@ -4,6 +4,7 @@
   import { deviceStore } from '$stores/device.svelte';
   import { cache, TTL } from '$stores/cache.svelte';
   import { i18n } from '$stores/i18n.svelte';
+  import { toast } from '$stores/toast.svelte';
   import Skeleton from '$components/Skeleton.svelte';
   import AppName from '$components/AppName.svelte';
   import { appModalStore } from '$stores/appModal.svelte';
@@ -12,8 +13,10 @@
   type Tab = 'overview' | 'inventory' | 'optimize' | 'compile';
   let tab: Tab = $state('overview');
 
-  let overview: StorageOverview | null = $state(null);
-  let inventory: PackageSize[] = $state([]);
+  // Seed from cache so tab revisits render instantly (stale-while-revalidate).
+  const _seedSerial = deviceStore.selected?.serial ?? '';
+  let overview: StorageOverview | null = $state(cache.peek<StorageOverview>('storage:' + _seedSerial));
+  let inventory: PackageSize[] = $state(cache.peek<PackageSize[]>('inventory:' + _seedSerial) ?? []);
   let compileTarget = $state('');
   let compileMode: CompileMode = $state('speed');
   let compileBusy = $state(false);
@@ -131,10 +134,12 @@
 
   async function refreshOverview(force = false) {
     if (!deviceStore.selected) return;
-    loading = true; error = null;
+    const serial = deviceStore.selected.serial;
+    if (force) cache.invalidate('storage:' + serial);
+    loading = cache.peek('storage:' + serial) === null; // skeleton only if nothing cached
+    error = null;
     try {
-      if (force) cache.invalidate('storage:' + deviceStore.selected.serial);
-      overview = await cache.getOrFetch('storage:' + deviceStore.selected.serial, TTL.medium, () => api.storageOverview(deviceStore.selected!.serial));
+      overview = await cache.getOrFetch('storage:' + serial, TTL.medium, () => api.storageOverview(serial));
     } catch (e) {
       error = (e as DozeForgeError).message;
     } finally {
@@ -253,7 +258,7 @@
   async function runDexopt() {
     if (!deviceStore.selected) return;
     if (!dexoptConfirmed) {
-      alert('Please tick the warning checkbox first.');
+      toast.info(i18n.t('Please tick the warning checkbox first.'));
       return;
     }
     if (!confirm('Last chance — start ART recompilation NOW?\n\nThis will run for ~30-45min, peg the CPU, heat the device, and drain battery fast.\n\nOnly proceed if device is charging and you can leave it idle.')) return;

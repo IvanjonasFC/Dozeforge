@@ -6,6 +6,7 @@
   import { labelStore } from '$stores/labels.svelte';
   import { appModalStore } from '$stores/appModal.svelte';
   import { i18n } from '$stores/i18n.svelte';
+  import { toast } from '$stores/toast.svelte';
   import AppName from '$components/AppName.svelte';
   import Skeleton from '$components/Skeleton.svelte';
   import type { ProcessRow, ProcessSnapshot, ProcessState, TelemetryTick } from '$types';
@@ -130,7 +131,7 @@
     actionBusy = true; error = null;
     try {
       await invoke('kill_all_zombies', { serial: deviceStore.selected.serial });
-      alert(i18n.t('All zombie processes have been terminated.'));
+      toast.success(i18n.t('All zombie processes have been terminated.'));
     } catch (e) { error = (e as DozeForgeError).message; }
     finally { actionBusy = false; }
   }
@@ -140,7 +141,7 @@
     actionBusy = true; error = null;
     try {
       await invoke('run_shell', { serial: deviceStore.selected.serial, command: `kill -9 ${pid}` });
-      alert(i18n.t('Sent kill signal to PID {{pid}}.', { pid }));
+      toast.success(i18n.t('Sent kill signal to PID {{pid}}.', { pid }));
     } catch (e) { error = (e as DozeForgeError).message; }
     finally { actionBusy = false; }
   }
@@ -150,7 +151,7 @@
     actionBusy = true; error = null;
     try {
       await invoke('trim_memory', { serial: deviceStore.selected.serial });
-      alert(i18n.t('System-wide memory trim requested.'));
+      toast.success(i18n.t('System-wide memory trim requested.'));
     } catch (e) { error = (e as DozeForgeError).message; }
     finally { actionBusy = false; }
   }
@@ -160,7 +161,7 @@
     actionBusy = true; error = null;
     try {
       await api.setFixedPerformanceMode(deviceStore.selected.serial, true);
-      alert(i18n.t('Fixed Performance Mode enabled.'));
+      toast.success(i18n.t('Fixed Performance Mode enabled.'));
     } catch (e) { error = (e as DozeForgeError).message; }
     finally { actionBusy = false; }
   }

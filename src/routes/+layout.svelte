@@ -10,6 +10,7 @@
   import DevicePicker from '$components/DevicePicker.svelte';
   import CommandPalette from '$components/CommandPalette.svelte';
   import AppDetailsModal from '$components/AppDetailsModal.svelte';
+  import Toaster from '$components/Toaster.svelte';
 
   let { children } = $props();
 
@@ -22,6 +23,15 @@
     try { localStorage.setItem('df_disclaimer_v1', '1'); } catch { /* ignore */ }
     showDisclaimer = false;
   }
+
+  // App version shown in the sidebar footer (kept in sync with tauri.conf.json).
+  let appVersion = $state('');
+  onMount(async () => {
+    try {
+      const { getVersion } = await import('@tauri-apps/api/app');
+      appVersion = await getVersion();
+    } catch { /* non-Tauri / dev fallback */ }
+  });
 
   type NavItem = { href: string; label: string; icon: string };
   type NavSection = { label: string; items: NavItem[] };
@@ -179,6 +189,9 @@
           {#if !collapsed}<span>{i18n.t('Root Mode')}</span>{/if}
         </button>
       {/if}
+      {#if appVersion}
+        <span class="app-version" title="DozeForge v{appVersion}">{collapsed ? `v${appVersion.split('-')[0]}` : `v${appVersion}`}</span>
+      {/if}
     </div>
   </aside>
 
@@ -254,6 +267,7 @@
 
   <CommandPalette bind:open={paletteOpen} onNavigate={(href) => { paletteOpen = false; goto(href); }} />
   <AppDetailsModal />
+  <Toaster />
 
   {#if showDisclaimer}
     <div class="disclaimer-backdrop" role="dialog" aria-modal="true">
@@ -417,6 +431,16 @@
     padding: 0.6rem;
     border-top: 1px solid var(--hairline);
     flex-shrink: 0;
+  }
+  .app-version {
+    display: block;
+    margin-top: 0.5rem;
+    text-align: center;
+    font-size: 10px;
+    letter-spacing: 0.04em;
+    color: var(--fg-3);
+    font-variant-numeric: tabular-nums;
+    cursor: default;
   }
   .foot-btn {
     display: flex; align-items: center; gap: 0.6rem;

@@ -18,18 +18,26 @@
     StorageOverview
   } from '$types';
 
-  let snap: OverviewSnapshot | null = $state(null);
-  let miscat: MiscategorizedApp[] = $state([]);
-  let privacy: PrivacyState | null = $state(null);
-  let storage: StorageOverview | null = $state(null);
-  let loadedAt: Date | null = $state(null);
+  // Seed state from the cache on (re)mount so switching tabs and coming back
+  // renders instantly with the last data (stale-while-revalidate) instead of a
+  // skeleton. `refresh()` then silently updates it if the TTL has expired.
+  const _seedSerial = deviceStore.selected?.serial ?? '';
+  let snap: OverviewSnapshot | null = $state(cache.peek<OverviewSnapshot>('overview:' + _seedSerial));
+  let miscat: MiscategorizedApp[] = $state(cache.peek<MiscategorizedApp[]>('miscat:' + _seedSerial) ?? []);
+  let privacy: PrivacyState | null = $state(cache.peek<PrivacyState>('privacy:' + _seedSerial));
+  let storage: StorageOverview | null = $state(cache.peek<StorageOverview>('storage:' + _seedSerial));
+  const _seedTs = cache.lastFetched('overview:' + _seedSerial);
+  let loadedAt: Date | null = $state(_seedTs ? new Date(_seedTs) : null);
   let loading = $state(false);
   let error: string | null = $state(null);
 
   async function refresh() {
     if (!deviceStore.selected || deviceStore.selected.state !== 'device') return;
     const serial = deviceStore.selected.serial;
-    loading = true;
+    // Only show skeletons when there's no fresh cached snapshot — on a tab
+    // revisit within the TTL the data renders instantly (no skeleton flash).
+    const ts = cache.lastFetched('overview:' + serial);
+    loading = !(ts !== null && Date.now() - ts < TTL.short);
     error = null;
     try {
       const [ov, ma] = await Promise.all([

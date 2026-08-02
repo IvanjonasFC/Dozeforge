@@ -21,11 +21,14 @@
   type Tab = 'health' | 'drain' | 'display' | 'performance' | 'history';
   let tab: Tab = $state('health');
 
-  let battery: BatteryHealth | null = $state(null);
+  // Seed from cache on (re)mount so tab revisits render instantly with the last
+  // data (stale-while-revalidate) instead of a skeleton reload.
+  const _seedSerial = deviceStore.selected?.serial ?? '';
+  let battery: BatteryHealth | null = $state(cache.peek<BatteryHealth>('health:' + _seedSerial));
   let loadingHealth = $state(false);
   let errorHealth: string | null = $state(null);
 
-  let drain: BatteryDrain | null = $state(null);
+  let drain: BatteryDrain | null = $state(cache.peek<BatteryDrain>('drain:' + _seedSerial));
   let loadingDrain = $state(false);
   let errorDrain: string | null = $state(null);
   let drainFilter = $state('');
@@ -96,33 +99,35 @@
     finally { bypassBusy = false; }
   }
 
-  async function fetchHealth() {
+  async function fetchHealth(force = false) {
     if (!deviceStore.selected) return;
-    loadingHealth = true; errorHealth = null;
+    const serial = deviceStore.selected.serial;
+    const key = 'health:' + serial;
+    if (force) cache.invalidate(key);
+    loadingHealth = cache.peek(key) === null;  // skeleton only if nothing cached
+    errorHealth = null;
     try {
-      battery = await api.batteryHealth(deviceStore.selected.serial, true);
+      battery = await cache.getOrFetch(key, TTL.short, () => api.batteryHealth(serial, true));
     } catch (e) { errorHealth = (e as DozeForgeError).message; }
     finally { loadingHealth = false; }
   }
 
   let drainTimedOut = $state(false);
-  async function fetchDrain() {
+  async function fetchDrain(force = false) {
     if (!deviceStore.selected) return;
-    loadingDrain = true; errorDrain = null; drainTimedOut = false;
     const serial = deviceStore.selected.serial;
+    const key = 'drain:' + serial;
+    if (force) cache.invalidate(key);
+    loadingDrain = cache.peek(key) === null;  // skeleton only if nothing cached
+    errorDrain = null; drainTimedOut = false;
     try {
       // dumpsys batterystats can be slow — or hang — over Wi-Fi ADB. Cap the
       // wait so the UI recovers into the empty/retry state instead of loading
-      // forever.
-      drain = await Promise.race([
+      // forever. Cached (TTL.medium) so tab revisits are instant.
+      drain = await cache.getOrFetch(key, TTL.medium, () => Promise.race([
         api.batteryPerApp(serial),
         new Promise<never>((_, reject) => setTimeout(() => reject(new Error('__timeout__')), 30000)),
-      ]) as typeof drain;
-      console.debug('[DozeForge] battery_per_app →', {
-        entries: drain?.entries?.length ?? 0,
-        computed_drain_mah: drain?.computed_drain_mah,
-        capacity_mah: drain?.capacity_mah,
-      });
+      ])) as typeof drain;
       if (drain?.entries) {
         // Only real, installed package names can be queried for app-ops.
         // System/shared UIDs surface as synthetic labels ("system:uid=1051",
@@ -427,7 +432,7 @@
 
   {#if tab === 'health'}
     <div class="row-actions">
-      <button class="primary" onclick={fetchHealth} disabled={loadingHealth}>
+      <button class="primary" onclick={() => fetchHealth(true)} disabled={loadingHealth}>
         {loadingHealth ? i18n.t('Loading...') : i18n.t('Refresh')}
       </button>
     </div>
@@ -538,7 +543,7 @@
     </div>
 
     <div class="row-actions">
-      <button class="primary" onclick={fetchDrain} disabled={loadingDrain}>
+      <button class="primary" onclick={() => fetchDrain(true)} disabled={loadingDrain}>
         {loadingDrain ? i18n.t('Reading…') : i18n.t('Refresh')}
       </button>
     </div>

@@ -6,6 +6,7 @@
   import type { UnlistenFn } from '@tauri-apps/api/event';
   import { formatTimestamp } from '$utils/format';
   import { i18n } from '$stores/i18n.svelte';
+  import { toast } from '$stores/toast.svelte';
   import type { ActionLogEntry, OptimizationAction } from '$types';
 
   type ToolsTab = 'logs' | 'bugreport' | 'profiles' | 'console';
@@ -167,7 +168,7 @@
         const profile = JSON.parse(content);
         if (!confirm(`Import profile with ${profile.disabled_packages?.length || 0} disabled apps?`)) return;
         await api.importNativeProfile(deviceStore.selected.serial, profile);
-        alert('Profile imported successfully!');
+        toast.success(i18n.t('Profile imported successfully!'));
       }
     } catch (e) { actionError = (e as DozeForgeError).message; }
     finally { actionLoading = false; }

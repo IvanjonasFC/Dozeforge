@@ -50,10 +50,12 @@
     perms: Record<string, string>;
   }
 
-  let packages: InstalledPackage[] = $state([]);
-  let privacyState: PrivacyState | null = $state(null);
-  let bloatRecs: BloatwareRecommendation[] = $state([]);
-  let dangerousPermissions: Array<{ package: string, permissions: Record<string, string> }> = $state([]);
+  // Seed from cache so tab revisits render instantly (stale-while-revalidate).
+  const _seedSerial = deviceStore.selected?.serial ?? '';
+  let packages: InstalledPackage[] = $state(cache.peek<InstalledPackage[]>('packages:' + _seedSerial) ?? []);
+  let privacyState: PrivacyState | null = $state(cache.peek<PrivacyState>('privacy:' + _seedSerial));
+  let bloatRecs: BloatwareRecommendation[] = $state(cache.peek<BloatwareRecommendation[]>('bloat:' + _seedSerial) ?? []);
+  let dangerousPermissions: Array<{ package: string, permissions: Record<string, string> }> = $state(cache.peek<Array<{ package: string, permissions: Record<string, string> }>>('dangerous_perms:' + _seedSerial) ?? []);
   let disabledSet: Set<string> = $state(new Set());
 
   let loading = $state(false);
@@ -70,9 +72,10 @@
 
   async function refresh() {
     if (!deviceStore.selected) return;
-    loading = true; error = null; success = null;
+    const serial = deviceStore.selected.serial;
+    loading = cache.peek('packages:' + serial) === null; // skeleton only if nothing cached
+    error = null; success = null;
     try {
-      const serial = deviceStore.selected.serial;
       const [pkgs, priv, recs, dp, prof] = await Promise.all([
         cache.getOrFetch('packages:' + serial, TTL.medium, () => api.listPackages(serial)),
         cache.getOrFetch('privacy:' + serial, TTL.medium, () => api.getPrivacyState(serial)),

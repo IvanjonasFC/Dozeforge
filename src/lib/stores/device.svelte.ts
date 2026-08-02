@@ -1,5 +1,6 @@
 import { api } from '$tauri/api';
 import type { Device, DeviceCapabilities } from '$types';
+import { toast } from '$stores/toast.svelte';
 
 class DeviceStore {
   devices = $state<Device[]>([]);
@@ -94,7 +95,7 @@ class DeviceStore {
     if (this.hasRootAccess) {
       this.rootMode = !this.rootMode;
     } else {
-      alert('This device does not have Root access granted or is not rooted.');
+      toast.info('This device does not have Root access granted or is not rooted.');
     }
   }
 }

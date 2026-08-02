@@ -16,8 +16,9 @@
   let terr = $state<string | null>(null);
   let busy = $state(false);
 
-  // Props (shared: diagnostics + raw viewer)
-  let props = $state<Record<string, string> | null>(null);
+  // Props (shared: diagnostics + raw viewer). Seeded from cache so tab revisits
+  // render instantly (stale-while-revalidate).
+  let props = $state<Record<string, string> | null>(cache.peek<Record<string, string>>('props:' + (deviceStore.selected?.serial ?? '')));
   let propsError = $state<string | null>(null);
   let propsLoading = $state(false);
   let propsFilter = $state('');
@@ -26,7 +27,8 @@
 
   async function loadProps() {
     if (!ready) return;
-    propsLoading = true; propsError = null;
+    propsLoading = cache.peek('props:' + dev!.serial) === null; // skeleton only if nothing cached
+    propsError = null;
     try {
       props = await cache.getOrFetch('props:' + dev!.serial, TTL.medium, () => api.getSystemProperties(dev!.serial));
       try { selinux = (await api.runShell(dev!.serial, 'getenforce')).trim(); } catch { /* optional */ }

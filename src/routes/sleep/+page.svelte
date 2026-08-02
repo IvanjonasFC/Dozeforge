@@ -8,6 +8,7 @@
   import AppName from '$components/AppName.svelte';
   import OemNote from '$components/OemNote.svelte';
   import { labelStore } from '$stores/labels.svelte';
+  import { cache, TTL } from '$stores/cache.svelte';
   import { i18n } from '$stores/i18n.svelte';
   import type {
     AuditReport,
@@ -22,14 +23,21 @@
   } from '$types';
   import { formatDuration } from '$utils/format';
 
-  let score = $state<SleepScore | null>(null);
-  let audit = $state<AuditReport | null>(null);
-  let wakeup = $state<WakeupSources | null>(null);
-  let misc = $state<MiscategorizedApp[]>([]);
-  let timeline = $state<SleepTimeline | null>(null);
-  let kernelWl = $state<KernelWakelock[]>([]);
-  let perfSettings = $state<PerformanceSettings | null>(null);
-  let dozeState = $state<DozeState | null>(null);
+  // Seed from cache on (re)mount so a tab revisit renders instantly with the
+  // last analysis (stale-while-revalidate) instead of "Analyzing…" skeletons.
+  type SleepBundle = {
+    sc: SleepScore; a: AuditReport; w: WakeupSources; m: MiscategorizedApp[];
+    t: SleepTimeline | null; kw: KernelWakelock[]; p: PerformanceSettings | null; ds: DozeState | null;
+  };
+  const _seed = cache.peek<SleepBundle>('sleep:' + (deviceStore.selected?.serial ?? ''));
+  let score = $state<SleepScore | null>(_seed?.sc ?? null);
+  let audit = $state<AuditReport | null>(_seed?.a ?? null);
+  let wakeup = $state<WakeupSources | null>(_seed?.w ?? null);
+  let misc = $state<MiscategorizedApp[]>(_seed?.m ?? []);
+  let timeline = $state<SleepTimeline | null>(_seed?.t ?? null);
+  let kernelWl = $state<KernelWakelock[]>(_seed?.kw ?? []);
+  let perfSettings = $state<PerformanceSettings | null>(_seed?.p ?? null);
+  let dozeState = $state<DozeState | null>(_seed?.ds ?? null);
   let loading = $state(false);
   let perfBusy = $state(false);
   let motionBusy = $state(false);
@@ -43,34 +51,43 @@
 
   let appRestrictions = $state<Record<string, any>>({});
 
-  async function analyze() {
+  async function analyze(force = false) {
     if (!deviceStore.selected) return;
-    loading = true;
+    const serial = deviceStore.selected.serial;
+    const key = 'sleep:' + serial;
+    if (force) cache.invalidate(key);
+    // Skeletons only when nothing is cached (first load or a forced refresh).
+    // With a cached bundle we show it instantly and refresh silently in the
+    // background — no "Analyzing…" flash when switching tabs.
+    loading = cache.peek(key) === null;
     error = null;
     success = null;
     try {
-      const [sc, a, w, m, t, kw, p, ds] = await Promise.all([
-        api.sleepScore(deviceStore.selected.serial),
-        api.auditDevice(deviceStore.selected.serial),
-        api.listWakeupSources(deviceStore.selected.serial),
-        api.miscategorizedApps(deviceStore.selected.serial).catch(() => []),
-        api.sleepTimeline(deviceStore.selected.serial).catch(() => null),
-        api.kernelWakelocks(deviceStore.selected.serial).catch(() => []),
-        api.getPerformanceSettings(deviceStore.selected.serial).catch(() => null),
-        api.getDozeState(deviceStore.selected.serial).catch(() => null)
-      ]);
-      score = sc;
-      audit = a;
-      wakeup = w;
-      misc = m;
-      timeline = t;
-      kernelWl = kw;
-      perfSettings = p;
-      dozeState = ds;
-      
+      const b = await cache.getOrFetch(key, TTL.medium, async () => {
+        const [sc, a, w, m, t, kw, p, ds] = await Promise.all([
+          api.sleepScore(serial),
+          api.auditDevice(serial),
+          api.listWakeupSources(serial),
+          api.miscategorizedApps(serial).catch(() => []),
+          api.sleepTimeline(serial).catch(() => null),
+          api.kernelWakelocks(serial).catch(() => []),
+          api.getPerformanceSettings(serial).catch(() => null),
+          api.getDozeState(serial).catch(() => null)
+        ]);
+        return { sc, a, w, m, t, kw, p, ds };
+      });
+      score = b.sc;
+      audit = b.a;
+      wakeup = b.w;
+      misc = b.m;
+      timeline = b.t;
+      kernelWl = b.kw;
+      perfSettings = b.p;
+      dozeState = b.ds;
+
       if (audit?.culprits) {
         const pkgs = audit.culprits.map(c => c.package).slice(0, 30);
-        api.getAppRestrictionsBatch(deviceStore.selected.serial, pkgs)
+        api.getAppRestrictionsBatch(serial, pkgs)
            .then(res => { appRestrictions = res; })
            .catch(e => console.warn(e));
       }
@@ -151,7 +168,7 @@
       //    its own after minutes with the screen off — nothing to see here live).
       await api.runShell(s, 'dumpsys deviceidle step deep');
       // 3) Re-read the new state.
-      await analyze();
+      await analyze(true);
     } catch (e) { error = (e as DozeForgeError).message; }
     finally { loading = false; }
   }
@@ -269,7 +286,7 @@
     loading = true; error = null;
     try {
       await api.setDozeWhitelist(deviceStore.selected.serial, pkg, false);
-      await analyze();
+      await analyze(true);
     } catch (e) { error = (e as DozeForgeError).message; }
     finally { loading = false; }
   }
@@ -333,7 +350,7 @@
       {i18n.t('Why the device is not sleeping when the screen is off. Three layers: global timeline, per-app culprits, and (optionally) kernel-level wakelocks.')}
     </p>
   </div>
-  <button class="primary" onclick={analyze} disabled={loading || !deviceStore.selected}>
+  <button class="primary" onclick={() => analyze(true)} disabled={loading || !deviceStore.selected}>
     {loading ? i18n.t('Analyzing…') : i18n.t('Re-analyze')}
   </button>
 </header>

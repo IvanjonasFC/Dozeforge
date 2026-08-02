@@ -5,6 +5,7 @@
   import { api } from '$lib/tauri/api';
   import PairingModal from './PairingModal.svelte';
   import { i18n } from '$stores/i18n.svelte';
+  import { toast } from '$stores/toast.svelte';
 
   let pairingAddress = $state('');
   let pairingOpen = $state(false);
@@ -27,10 +28,10 @@
     open = false;
     try {
       await api.adbTcpip(serial);
-      alert(i18n.t('TCP/IP mode enabled on 5555. You can now disconnect the USB cable and pair via Wi-Fi.'));
+      toast.success(i18n.t('TCP/IP mode enabled on 5555. You can now disconnect the USB cable and pair via Wi-Fi.'));
       await deviceStore.refresh();
     } catch (err) {
-      alert('Failed to enable TCP/IP: ' + err);
+      toast.error(i18n.t('Failed to enable TCP/IP:') + ' ' + err);
     }
   }
   async function connectService(address: string) {
@@ -39,7 +40,7 @@
       await api.adbConnect(address);
       await deviceStore.refresh();
     } catch (err) {
-      alert('Failed to connect: ' + err);
+      toast.error(i18n.t('Failed to connect:') + ' ' + err);
     }
   }
   // Disconnect a device. Wi-Fi (ip:port) endpoints get a real `adb disconnect`;
@@ -48,9 +49,9 @@
     e.stopPropagation();
     if (d.serial.includes(':')) {
       try { await api.adbDisconnect(d.serial); }
-      catch (err) { alert(i18n.t('Failed to disconnect:') + ' ' + err); }
+      catch (err) { toast.error(i18n.t('Failed to disconnect:') + ' ' + err); }
     } else {
-      alert(i18n.t('USB devices disconnect by unplugging the cable. Tip: enable Wi-Fi (TCP/IP) to manage this phone without a cable.'));
+      toast.info(i18n.t('USB devices disconnect by unplugging the cable. Tip: enable Wi-Fi (TCP/IP) to manage this phone without a cable.'));
     }
     await deviceStore.refresh();
   }

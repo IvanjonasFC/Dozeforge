@@ -8,7 +8,9 @@
   import { i18n } from '$stores/i18n.svelte';
   import type { InstalledPackage } from '$types';
 
-  let packages = $state<InstalledPackage[]>([]);
+  // Seed from cache so tab revisits render instantly (stale-while-revalidate).
+  const _seedPkgs = cache.peek<InstalledPackage[]>('packages:' + (deviceStore.selected?.serial ?? ''));
+  let packages = $state<InstalledPackage[]>(_seedPkgs ? _seedPkgs.filter((p) => !p.is_system) : []);
   let loadingApps = $state(false);
   let filter = $state('');
   let selectedPkg = $state<string | null>(null);
@@ -27,9 +29,10 @@
 
   async function loadApps() {
     if (!deviceStore.selected) return;
-    loadingApps = true; error = null;
+    const serial = deviceStore.selected.serial;
+    loadingApps = cache.peek('packages:' + serial) === null; // skeleton only if nothing cached
+    error = null;
     try {
-      const serial = deviceStore.selected.serial;
       const pkgs = await cache.getOrFetch('packages:' + serial, TTL.medium, () => api.listPackages(serial));
       packages = pkgs.filter((p) => !p.is_system);
     } catch (e) {

@@ -14,10 +14,12 @@
     PerformanceSettings
   } from '$types';
 
-  let privacyState: PrivacyState | null = $state(null);
-  let presets: DnsPreset[] = $state([]);
-  let tweaks: SystemTweaks | null = $state(null);
-  let perfSettings: PerformanceSettings | null = $state(null);
+  // Seed from cache so tab revisits render instantly (stale-while-revalidate).
+  const _seedSerial = deviceStore.selected?.serial ?? '';
+  let privacyState: PrivacyState | null = $state(cache.peek<PrivacyState>('privacy:' + _seedSerial));
+  let presets: DnsPreset[] = $state(cache.peek<DnsPreset[]>('dns-presets') ?? []);
+  let tweaks: SystemTweaks | null = $state(cache.peek<SystemTweaks>('tweaks:' + _seedSerial));
+  let perfSettings: PerformanceSettings | null = $state(cache.peek<PerformanceSettings>('perf:' + _seedSerial));
   
   let captiveBusy = $state(false);
   let dataSaverBusy = $state(false);
@@ -36,7 +38,8 @@
 
   async function refresh() {
     if (!deviceStore.selected) return;
-    loading = true; error = null;
+    loading = cache.peek('privacy:' + deviceStore.selected.serial) === null; // skeleton only if nothing cached
+    error = null;
     try {
       const [s, ps, tw, perf] = await Promise.all([
         cache.getOrFetch('privacy:' + deviceStore.selected.serial, TTL.medium, () => api.getPrivacyState(deviceStore.selected!.serial)),

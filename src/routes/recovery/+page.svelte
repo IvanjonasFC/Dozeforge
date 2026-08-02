@@ -83,7 +83,7 @@
   }
 
   // ── Device identity for the stock-firmware finder ──
-  let props = $state<Record<string, string> | null>(null);
+  let props = $state<Record<string, string> | null>(cache.peek<Record<string, string>>('props:' + (deviceStore.selected?.serial ?? '')));
   async function loadProps() {
     if (!dev || dev.state !== 'device') return;
     try { props = await cache.getOrFetch('props:' + dev.serial, TTL.medium, () => api.getSystemProperties(dev!.serial)); } catch { /* offline/bootloader: fall back to the device list */ }

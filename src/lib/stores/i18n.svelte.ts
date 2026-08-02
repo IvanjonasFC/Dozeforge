@@ -124,6 +124,11 @@ const translations: Record<Language, Record<string, string>> = {
     "Disconnect (unplug cable)": "Desconectar (retira el cable)",
     "USB — unplug the cable to disconnect": "USB — retira el cable para desconectar",
     "Failed to disconnect:": "No se pudo desconectar:",
+    "Failed to connect:": "No se pudo conectar:",
+    "Failed to enable TCP/IP:": "No se pudo activar TCP/IP:",
+    "Profile imported successfully!": "¡Perfil importado correctamente!",
+    "Please tick the warning checkbox first.": "Marca primero la casilla de aviso.",
+    "This device does not have Root access granted or is not rooted.": "Este dispositivo no tiene acceso root concedido o no está rooteado.",
     "USB devices disconnect by unplugging the cable. Tip: enable Wi-Fi (TCP/IP) to manage this phone without a cable.": "Los dispositivos por cable se desconectan retirando el cable. Consejo: activa Wi-Fi (TCP/IP) para gestionar este móvil sin cable.",
 
     // --- first-run disclaimer ---
